@@ -82,7 +82,7 @@ adb install -r timbra-<version>.apk
 adb shell am start -n com.timbra/.ui.MainActivity
 ```
 
-Grant the audio permission on first launch; the first run scans MediaStore.
+Grant the photos and media permission on first launch.
 
 ## Project structure
 
