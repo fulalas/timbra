@@ -99,8 +99,7 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             val items = ArrayList<ListItem>()
 
             if (viewAs == ViewAs.HIERARCHY) {
-                node.childFolders
-                    .sortedBy { it.name.lowercase() }
+                FolderTreeBuilder.sortedChildren(node)
                     .forEach { items.add(ListItem.FolderRow(it)) }
                 playable = node.tracks.sortedBy(sortOrder)
             } else {

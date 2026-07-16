@@ -73,6 +73,23 @@ class PlayerConnection(private val context: Context) {
     /** Index of the last "play next" enqueued item, so further enqueues append FIFO. */
     private var enqueueEnd = -1
 
+    /**
+     * Path of the folder the current queue was loaded from by a folder jump/advance;
+     * null when the queue came from anywhere else. Set atomically with the queue via
+     * [play]'s parameter, cleared by every other queue replacement.
+     */
+    var folderContext: String? = null
+        private set
+
+    /**
+     * Bumped on every queue replacement. Folder navigation captures it when a move is
+     * requested and aborts if it changed by the time the move runs — so the automatic
+     * Advance-List advance and a user swipe aimed at the same transition can't stack
+     * into a double jump (see MainActivity.navigateToNeighbourFolder).
+     */
+    var queueGeneration = 0
+        private set
+
     /** Invoked when the queue ends (or Next past the last song) in Advance-List mode. */
     var onQueueEnded: (() -> Unit)? = null
 
@@ -202,6 +219,7 @@ class PlayerConnection(private val context: Context) {
         repeatOrdinal: Int,
     ) {
         val c = controller ?: return
+        queueGeneration++
         appShuffle = ShuffleMode.entries.getOrElse(shuffleOrdinal) { ShuffleMode.OFF }
         appRepeat = RepeatMode.entries.getOrElse(repeatOrdinal) { RepeatMode.OFF }
         c.setMediaItems(
@@ -238,10 +256,20 @@ class PlayerConnection(private val context: Context) {
      * Replace the queue with [tracks] starting at [startIndex]. [play] = true starts playback
      * (tapping a song); false leaves the play/pause state untouched — so a folder advance keeps
      * playing if it was playing (playWhenReady survives setMediaItems) and stays paused if paused.
+     * [folderContext] anchors folder navigation on the folder this queue came from (folder
+     * jumps/advances only). Returns false when there is no controller to command (released
+     * mid-flight, e.g. the app was backgrounded) — the queue is then untouched.
      */
-    fun play(tracks: List<Track>, startIndex: Int, play: Boolean = true) {
-        val c = controller ?: return
+    fun play(
+        tracks: List<Track>,
+        startIndex: Int,
+        play: Boolean = true,
+        folderContext: String? = null,
+    ): Boolean {
+        val c = controller ?: return false
+        queueGeneration++
         enqueueEnd = -1
+        this.folderContext = folderContext
         val start = startIndex.coerceIn(0, maxOf(0, tracks.size - 1))
         // The queue is being replaced while shuffle may be on: the pre-shuffle snapshot must
         // follow the NEW queue (turning shuffle off should keep the user here, sequential),
@@ -252,6 +280,7 @@ class PlayerConnection(private val context: Context) {
         c.setMediaItems(tracks.map { it.toMediaItem() }, start, 0)
         c.prepare()
         if (play) c.play()
+        return true
     }
 
     /** Insert [tracks] to play right after the current one (FIFO across repeated enqueues). */
@@ -409,6 +438,8 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         val snap = preShuffle
         preShuffle = null
+        queueGeneration++
+        folderContext = null
         appShuffle = ShuffleMode.OFF
         c.shuffleModeEnabled = false
         if (tracks.isEmpty() || snap == null) { saveModes(); pushState(); return }
@@ -443,7 +474,9 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         if (tracks.isEmpty()) return
         appShuffle = ShuffleMode.ALL
+        queueGeneration++
         enqueueEnd = -1
+        folderContext = null
         val curId = c.currentMediaItem?.mediaId?.toLongOrNull()
         val idx = if (curId != null) tracks.indexOfFirst { it.id == curId } else -1
         if (idx >= 0) {

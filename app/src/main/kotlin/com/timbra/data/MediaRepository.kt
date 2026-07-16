@@ -30,6 +30,7 @@ class MediaRepository(context: Context) {
     @Volatile private var cachedGenres: List<Genre>? = null
     @Volatile private var cachedPlaylists: List<Playlist>? = null
     @Volatile private var cachedFolderRoot: FolderNode? = null
+    @Volatile private var cachedSongFolders: List<FolderNode>? = null
 
     fun invalidate() {
         cachedTracks = null
@@ -38,6 +39,7 @@ class MediaRepository(context: Context) {
         cachedGenres = null
         cachedPlaylists = null
         cachedFolderRoot = null
+        cachedSongFolders = null
     }
 
     suspend fun allTracks(): List<Track> = withContext(Dispatchers.IO) {
@@ -48,6 +50,12 @@ class MediaRepository(context: Context) {
      *  reconstructed on every folder navigation (Advance-List phantom lookups). */
     suspend fun folderRoot(): FolderNode = withContext(Dispatchers.IO) {
         cachedFolderRoot ?: FolderTreeBuilder.build(allTracks()).also { cachedFolderRoot = it }
+    }
+
+    /** Cached flat traversal list ([FolderTreeBuilder.songFolders]) — folder navigation
+     *  consults it up to several times per gesture, so it must not re-walk the tree. */
+    suspend fun songFolders(): List<FolderNode> = withContext(Dispatchers.IO) {
+        cachedSongFolders ?: FolderTreeBuilder.songFolders(folderRoot()).also { cachedSongFolders = it }
     }
 
     suspend fun albums(): List<Album> = withContext(Dispatchers.IO) {

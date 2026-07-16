@@ -29,14 +29,18 @@ import androidx.navigation.ui.setupActionBarWithNavController
 import com.timbra.R
 import com.timbra.app
 import com.timbra.repository
-import com.timbra.data.FolderTreeBuilder
 import com.timbra.data.SortDefaults
 import com.timbra.data.comparatorFor
+import com.timbra.data.model.FolderNode
+import com.timbra.data.model.Track
 import com.timbra.data.sortedBy
 import com.timbra.databinding.ActivityMainBinding
 import com.timbra.player.PlayerConnection
+import com.timbra.player.ShuffleMode
 import com.timbra.player.UiPlayback
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MainActivity : AppCompatActivity() {
 
@@ -207,59 +211,114 @@ class MainActivity : AppCompatActivity() {
         return friendly.ifBlank { null }
     }
 
-    /**
-     * Advance-List repeat: continue with the next sibling folder. Triggered when the queue
-     * ends on its own or when Next is pressed on the last song (fire-and-forget).
-     */
-    fun advanceToNextFolder() { lifecycleScope.launch { advanceFolder(forward = true) } }
-
-    /** Advance-List: continue with the previous sibling folder (fire-and-forget). */
-    fun advanceToPrevFolder() { lifecycleScope.launch { advanceFolder(forward = false) } }
+    /** Serializes all folder navigation, so two moves can't interleave mid-computation. */
+    private val folderNavMutex = Mutex()
 
     /**
-     * Jump to the next ([forward] = true) or previous sibling folder — next folder from its
-     * first song, previous folder from its last. Returns false (a no-op) when there is no such
-     * folder or nothing is playing, so a caller tracking a pending advance can recover.
-     * Preserves play/pause: a queue that ended on its own keeps playing (playWhenReady is still
-     * set), a manual Next/swipe advance from a paused song stays paused.
+     * Advance-List repeat: continue with the next song-folder. Triggered when the queue
+     * ends on its own or when Next is pressed on the last song (fire-and-forget). The
+     * generation is captured HERE, at the moment of the trigger — if another navigation
+     * (e.g. a vertical swipe racing the natural queue end) replaces the queue first, this
+     * advance is superseded and must not stack a second move on top.
      */
-    suspend fun advanceFolder(forward: Boolean): Boolean {
-        val dir = player.state.value.filePath.ifBlank { return false }.substringBeforeLast('/', "")
-        val tracks = siblingFolderTracks(dir, if (forward) +1 else -1)
-        if (tracks.isEmpty()) return false
-        player.play(tracks, if (forward) 0 else tracks.lastIndex, play = false)
-        return true
+    fun advanceToNextFolder() {
+        val gen = player.queueGeneration
+        lifecycleScope.launch { advanceFolder(forward = true, expectedGen = gen) }
+    }
+
+    /** Advance-List: continue with the previous song-folder (fire-and-forget). */
+    fun advanceToPrevFolder() {
+        val gen = player.queueGeneration
+        lifecycleScope.launch { advanceFolder(forward = false, expectedGen = gen) }
     }
 
     /**
-     * The neighbour-folder songs used for Advance-List phantom art in one folder-tree lookup:
-     * (previous folder's last song, next folder's first song), either null if absent. Uses
-     * minWith/maxWith rather than sorting each whole folder just to read one end.
+     * Advance-List walk to the next ([forward] = true) or previous song-folder — next from
+     * its first song, previous from its last (timeline walking). Returns false (a no-op) at
+     * the library's edges or when nothing is playing, so a caller tracking a pending advance
+     * can recover. Preserves play/pause: a queue that ended on its own keeps playing
+     * (playWhenReady is still set), a manual Next/swipe advance from a paused song stays paused.
      */
-    suspend fun neighbourFolderSongs(dir: String): Pair<com.timbra.data.model.Track?, com.timbra.data.model.Track?> {
-        val siblings = siblingsOf(dir) ?: return null to null
-        val (list, idx) = siblings
+    suspend fun advanceFolder(
+        forward: Boolean,
+        expectedGen: Int = player.queueGeneration,
+    ): Boolean = navigateToNeighbourFolder(forward, expectedGen) { tracks ->
+        if (forward) 0 else tracks.lastIndex
+    } != null
+
+    /**
+     * Vertical-swipe folder jump: the next/previous song-folder in the flat traversal
+     * order. Unlike [advanceFolder] this is a direct jump, not timeline walking, so BOTH
+     * directions enter at the folder's FIRST song — or a random one when shuffle is on
+     * (the folder is the new pool). Works in any repeat mode and preserves play/pause
+     * (see [advanceFolder]). Returns the folder's name, or null on a no-op.
+     */
+    suspend fun jumpToNeighbourFolder(forward: Boolean): String? =
+        navigateToNeighbourFolder(forward, player.queueGeneration) { tracks ->
+            if (player.currentShuffle() != ShuffleMode.OFF) tracks.indices.random() else 0
+        }?.name
+
+    /**
+     * The one folder-navigation path: move to the neighbouring song-folder and load its
+     * tracks starting at [startOf]. Serialized by [folderNavMutex], and aborted when the
+     * queue was already replaced since [expectedGen] was captured — the racing navigation
+     * (auto-advance vs. swipe) that got there first stands; this one is superseded.
+     * Returns the folder navigated to, or null on a no-op.
+     */
+    private suspend fun navigateToNeighbourFolder(
+        forward: Boolean,
+        expectedGen: Int,
+        startOf: (List<Track>) -> Int,
+    ): FolderNode? = folderNavMutex.withLock {
+        if (expectedGen != player.queueGeneration) return null
+        val (prev, next) = neighbourSongFolders()
+        val target = (if (forward) next else prev) ?: return null
+        val tracks = target.tracks.sortedBy(SortDefaults.FOLDER_SONGS)
+        if (tracks.isEmpty()) return null
+        // play() can refuse (controller released mid-flight, e.g. backgrounded): nothing
+        // changed, so report the no-op instead of advancing the anchor/toast past reality.
+        if (!player.play(tracks, startOf(tracks), play = false, folderContext = target.path)) {
+            return null
+        }
+        // Shuffle-All's pool was the whole library; it is now this folder — which is what
+        // Shuffle-Songs means. Keeps the mode icon truthful about the actual pool.
+        if (player.currentShuffle() == ShuffleMode.ALL) player.setShuffle(ShuffleMode.CURRENT)
+        target
+    }
+
+    /**
+     * The (previous, next) song-folders around the one being played, in the flat traversal
+     * order ([MediaRepository.songFolders]); nulls at the library's edges or when nothing
+     * is playing. Anchored on the folder a jump/advance last loaded
+     * ([PlayerConnection.folderContext]); when that is absent — or STALE, i.e. no longer in
+     * the rebuilt tree after a rescan — it falls back to the playing file's own directory,
+     * which always directly contains that file and so is itself a song-folder entry.
+     */
+    private suspend fun neighbourSongFolders(): Pair<FolderNode?, FolderNode?> {
+        val filePath = player.state.value.filePath
+        if (filePath.isBlank()) return null to null
+        val folders = repository.songFolders()
+        var idx = player.folderContext
+            ?.let { ctx -> folders.indexOfFirst { it.path == ctx } } ?: -1
+        if (idx < 0) {
+            val dir = filePath.substringBeforeLast('/', "")
+            idx = folders.indexOfFirst { it.path == dir }
+        }
+        if (idx < 0) return null to null
+        return folders.getOrNull(idx - 1) to folders.getOrNull(idx + 1)
+    }
+
+    /**
+     * The neighbour-folder songs used for Advance-List phantom art, from one traversal
+     * lookup: (previous folder's last song, next folder's first song), either null if
+     * absent. Same traversal as the advances themselves, so the phantom cards preview the
+     * songs those swipes actually lead to. Uses minWith/maxWith rather than sorting each
+     * whole folder just to read one end.
+     */
+    suspend fun neighbourFolderSongs(): Pair<Track?, Track?> {
         val cmp = comparatorFor(SortDefaults.FOLDER_SONGS)
-        val prevLast = list.getOrNull(idx - 1)?.let { FolderTreeBuilder.flatten(it).maxWithOrNull(cmp) }
-        val nextFirst = list.getOrNull(idx + 1)?.let { FolderTreeBuilder.flatten(it).minWithOrNull(cmp) }
-        return prevLast to nextFirst
-    }
-
-    /** Tracks of the sibling folder [step] positions from [dir] (±1), sorted for playback. */
-    private suspend fun siblingFolderTracks(dir: String, step: Int): List<com.timbra.data.model.Track> {
-        val (list, idx) = siblingsOf(dir) ?: return emptyList()
-        val sibling = list.getOrNull(idx + step) ?: return emptyList()
-        return FolderTreeBuilder.flatten(sibling).sortedBy(SortDefaults.FOLDER_SONGS)
-    }
-
-    /** The sorted sibling folders of [dir]'s folder plus [dir]'s index among them, or null. */
-    private suspend fun siblingsOf(dir: String): Pair<List<com.timbra.data.model.FolderNode>, Int>? {
-        if (dir.isBlank()) return null
-        val root = repository.folderRoot()
-        val parent = FolderTreeBuilder.find(root, dir.substringBeforeLast('/', "")) ?: return null
-        val siblings = parent.childFolders.sortedBy { it.name.lowercase() }
-        val idx = siblings.indexOfFirst { it.path == dir }
-        return if (idx < 0) null else siblings to idx
+        val (prev, next) = neighbourSongFolders()
+        return prev?.tracks?.maxWithOrNull(cmp) to next?.tracks?.minWithOrNull(cmp)
     }
 
     /** Delete files from storage (system shows its own confirmation on API 30+). */

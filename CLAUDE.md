@@ -1,10 +1,5 @@
 # Timbra — build & contribution guide
 
-Clean-room, from-scratch re-implementation of an old (~2013, v2-era) Poweramp APK
-(`com.maxmpz.audioplayer`) that no longer runs on modern Android (its proprietary
-audio engine was 32-bit-ARM only). This rebuild is original code and is **not**
-affiliated with Poweramp; the only reference to it is the About screen's origin note.
-
 - **Name:** single source of truth is `appName` in `gradle.properties` (drives the in-app
   `app_name` resource via `resValue` in `app/build.gradle.kts`, and the APK filename in
   `build.sh`). To rename the app, change that one property.

@@ -17,7 +17,8 @@ that look and feel as original code on a modern stack.
   than the platform codecs, on all shipped ABIs including `arm64-v8a`.
 - **Gapless & background playback** — a `MediaSessionService` keeps playing with lock-screen
   / notification controls and Bluetooth media keys.
-- **Swipeable album-art deck** — flip through the queue by swiping the cover art.
+- **Swipeable album-art deck** — swipe the cover art: left/right to change song,
+  up/down to jump to the next/previous folder.
 - **Shuffle** — off · shuffle current list · shuffle all songs.
 - **Repeat** — off · repeat list · **advance list** · repeat song.
 - **Advance-List folder navigation** — at a folder boundary, playback (and swipe/next/prev)

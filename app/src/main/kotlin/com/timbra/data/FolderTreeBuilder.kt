@@ -61,4 +61,25 @@ object FolderTreeBuilder {
         node.subFolders.values.forEach { out.addAll(flatten(it)) }
         return out
     }
+
+    /** Child folders of [node] in the app's ONE canonical folder order — shared by the
+     *  Folders screen and the playback traversal so they can never drift apart. */
+    fun sortedChildren(node: FolderNode): List<FolderNode> =
+        node.childFolders.sortedBy { it.name.lowercase() }
+
+    /**
+     * The library as one flat, depth-first list of the folders that DIRECTLY contain
+     * songs — THE traversal order for every folder jump/advance. Container folders
+     * (only subfolders, no loose files) are not entries; a folder entry stands for its
+     * own tracks only, its subfolders being entries of their own.
+     */
+    fun songFolders(root: FolderNode): List<FolderNode> {
+        val out = ArrayList<FolderNode>()
+        fun walk(node: FolderNode) {
+            if (node.tracks.isNotEmpty()) out.add(node)
+            sortedChildren(node).forEach { walk(it) }
+        }
+        walk(root)
+        return out
+    }
 }
