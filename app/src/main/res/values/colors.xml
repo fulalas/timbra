@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matte dark theme (classic matte v2 look). Pure black window for OLED. -->
+    <color name="pa_window">#000000</color>
+    <color name="pa_surface">#151515</color>
+    <color name="pa_surface_raised">#1C1C1C</color>
+    <color name="pa_deck_top">#2A2A2A</color>
+    <color name="pa_deck_bottom">#0C0C0C</color>
+    <color name="pa_divider">#242424</color>
+    <color name="pa_row_pressed">#26313A</color>
+    <color name="pa_now_playing">#228C9EFF</color>
+
+    <!-- Cool blue-white glow accent taken from the matte skin highlights. -->
+    <color name="pa_accent">#C5CAE9</color>
+    <color name="pa_accent_glow">#8C9EFF</color>
+    <color name="pa_accent_dim">#3A4A66</color>
+
+    <color name="pa_text_primary">#EDEDED</color>
+    <color name="pa_text_secondary">#9A9A9A</color>
+    <color name="pa_text_tertiary">#6E6E6E</color>
+
+    <color name="pa_scrim">#66000000</color>
+    <color name="pa_transparent">#00000000</color>
+</resources>

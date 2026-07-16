@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Recreated transport-deck panel background: glossy near-black vertical gradient
+     with a faint blue-white top hairline, matching the matte skin. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="90"
+                android:startColor="@color/pa_deck_bottom"
+                android:centerColor="#161616"
+                android:endColor="@color/pa_deck_top" />
+        </shape>
+    </item>
+    <item android:gravity="top" android:height="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#33C5CAE9" />
+        </shape>
+    </item>
+</layer-list>

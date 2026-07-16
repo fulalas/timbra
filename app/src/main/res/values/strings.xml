@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- app_name is generated from the `appName` property (see gradle.properties / build.gradle.kts)
+         so the app's name lives in exactly one place. -->
+
+    <!-- Library categories -->
+    <string name="cat_folders">Folders</string>
+    <string name="cat_albums">Albums</string>
+    <string name="cat_artists">Artists</string>
+    <string name="cat_songs">All Songs</string>
+    <string name="cat_genres">Genres</string>
+    <string name="cat_playlists">Playlists</string>
+    <string name="library">Library</string>
+
+    <!-- Menu -->
+    <string name="menu_sort">Sort</string>
+    <string name="menu_view_as">View As</string>
+    <string name="view_as_flat">Flat</string>
+    <string name="view_as_hierarchy">Hierarchy</string>
+
+    <!-- Sort orders -->
+    <string name="sort_filename">By filename</string>
+    <string name="sort_title">By title</string>
+    <string name="sort_track">By track #</string>
+    <string name="sort_album">By album</string>
+    <string name="sort_artist">By artist</string>
+    <string name="sort_date">By date</string>
+    <string name="sort_duration">By duration</string>
+
+    <!-- Player -->
+    <string name="cd_play">Play</string>
+    <string name="cd_pause">Pause</string>
+    <string name="cd_next">Next</string>
+    <string name="cd_prev">Previous</string>
+    <string name="cd_shuffle">Shuffle</string>
+    <string name="cd_repeat">Repeat</string>
+
+    <!-- Repeat mode labels -->
+    <string name="repeat_off">Repeat Off</string>
+    <string name="repeat_list">Repeat List</string>
+    <string name="repeat_list_sub">Jump to the first song in a list</string>
+    <string name="repeat_advance">Advance List</string>
+    <string name="repeat_advance_sub">Jump to next list (continues playing the next folder)</string>
+    <string name="repeat_song">Repeat Song</string>
+
+    <!-- Shuffle mode labels -->
+    <string name="shuffle_off">Shuffle Off</string>
+    <string name="shuffle_songs">Shuffle Songs</string>
+    <string name="shuffle_songs_sub">Current list</string>
+    <string name="shuffle_all">Shuffle All Songs</string>
+
+    <!-- Context menu -->
+    <string name="menu_enqueue">Enqueue</string>
+    <string name="menu_delete">Delete</string>
+    <string name="menu_remove">Remove from queue</string>
+    <string name="cd_reorder">Reorder</string>
+    <string name="menu_info">Info / Tags</string>
+    <string name="menu_share">Share</string>
+    <string name="enqueued">Enqueued: %1$s</string>
+    <string name="delete_confirm">Delete this file permanently?</string>
+    <string name="delete_confirm_many">Delete %1$d files permanently?</string>
+    <string name="cat_queue">Queue</string>
+    <string name="queue_empty">Queue is empty.\nLong-press a song or folder and choose Enqueue.</string>
+    <string name="menu_clear_queue">Clear Queue</string>
+    <string name="clear_queue_confirm">Clear the entire queue?</string>
+
+    <!-- Search -->
+    <string name="menu_search">Search</string>
+    <string name="search_hint">Search all songs</string>
+    <string name="search_prompt">Type to search all songs</string>
+    <string name="search_no_results">No results</string>
+
+    <!-- About -->
+    <string name="menu_about">About</string>
+    <string name="about_body">Version %1$s (build %2$d)\nPackage: %3$s\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\n• Audio engine: Media3 / ExoPlayer with FFmpeg decoders (wide format support, all ABIs incl. arm64)\n• Folder-hierarchy browsing, full library, gapless playback, background playback\n\nBuilt with Kotlin.</string>
+    <string name="cd_library">Library</string>
+    <string name="cd_album_art">Album art</string>
+
+    <!-- Misc -->
+    <string name="unknown_artist">Unknown artist</string>
+    <string name="unknown_album">Unknown album</string>
+    <string name="unknown_genre">Unknown genre</string>
+    <string name="nothing_playing">Nothing playing</string>
+    <string name="permission_needed">This app needs access to your audio files.</string>
+    <string name="grant">Grant</string>
+    <string name="empty_folder">No audio here</string>
+    <string name="song_count">%1$d songs</string>
+    <string name="channel_playback">Playback</string>
+</resources>

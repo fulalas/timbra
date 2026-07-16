@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Timbra" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/pa_accent</item>
+        <item name="colorOnPrimary">#0A0A0A</item>
+        <item name="colorSecondary">@color/pa_accent_glow</item>
+        <item name="android:colorBackground">@color/pa_window</item>
+        <item name="colorSurface">@color/pa_surface</item>
+        <item name="colorOnSurface">@color/pa_text_primary</item>
+        <item name="android:textColorPrimary">@color/pa_text_primary</item>
+        <item name="android:textColorSecondary">@color/pa_text_secondary</item>
+        <item name="android:windowBackground">@color/pa_window</item>
+        <item name="android:statusBarColor">@color/pa_window</item>
+        <item name="android:navigationBarColor">@color/pa_window</item>
+        <item name="colorControlActivated">@color/pa_accent_glow</item>
+        <item name="colorControlHighlight">@color/pa_row_pressed</item>
+    </style>
+
+    <style name="Tb.Toolbar" parent="Widget.Material3.Toolbar">
+        <item name="android:background">@color/pa_window</item>
+        <item name="titleTextColor">@color/pa_text_primary</item>
+        <item name="subtitleTextColor">@color/pa_text_secondary</item>
+        <item name="android:elevation">4dp</item>
+    </style>
+
+    <style name="Tb.ListTitle" parent="">
+        <item name="android:textColor">@color/pa_text_primary</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <style name="Tb.ListSubtitle" parent="">
+        <item name="android:textColor">@color/pa_text_secondary</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+</resources>

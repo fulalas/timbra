@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/row_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/pa_row_height"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp">
+
+        <ImageView
+            android:id="@+id/thumb"
+            android:layout_width="@dimen/pa_row_thumb"
+            android:layout_height="@dimen/pa_row_thumb"
+            android:scaleType="fitCenter"
+            android:src="@drawable/matte_album_96"
+            android:contentDescription="@null" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="14dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/title"
+                style="@style/Tb.ListTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <TextView
+                android:id="@+id/subtitle"
+                style="@style/Tb.ListSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="@color/pa_text_tertiary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <View
+        android:id="@+id/now_playing_bar"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:background="@drawable/now_playing_underline"
+        android:visibility="gone" />
+</LinearLayout>

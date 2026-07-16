@@ -1,0 +1,349 @@
+package com.timbra.ui
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.MediaStore
+import android.view.Menu
+import android.view.MenuInflater
+import android.view.MenuItem
+import android.widget.SeekBar
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.os.bundleOf
+import androidx.core.view.MenuProvider
+import androidx.core.view.isVisible
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.NavController
+import androidx.navigation.fragment.NavHostFragment
+import androidx.navigation.navOptions
+import androidx.navigation.ui.AppBarConfiguration
+import androidx.navigation.ui.navigateUp
+import androidx.navigation.ui.setupActionBarWithNavController
+import com.timbra.R
+import com.timbra.app
+import com.timbra.repository
+import com.timbra.data.FolderTreeBuilder
+import com.timbra.data.SortDefaults
+import com.timbra.data.comparatorFor
+import com.timbra.data.sortedBy
+import com.timbra.databinding.ActivityMainBinding
+import com.timbra.player.PlayerConnection
+import com.timbra.player.UiPlayback
+import kotlinx.coroutines.launch
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+    lateinit var player: PlayerConnection
+        private set
+
+    private val navController: NavController by lazy {
+        (supportFragmentManager.findFragmentById(R.id.nav_host) as NavHostFragment).navController
+    }
+    private val appBarConfig by lazy { AppBarConfiguration(setOf(R.id.libraryFragment)) }
+
+    /** The player is a transient overlay: opening it never stacks a second copy, and
+     *  backing out of it returns to the browse screen beneath — never to another player. */
+    private val playerNavOptions by lazy {
+        navOptions {
+            launchSingleTop = true
+            popUpTo(R.id.playerFragment) { inclusive = true }
+        }
+    }
+
+    private var onPlayerScreen = false
+    private var lastPlayback = UiPlayback()
+    private var miniUserSeeking = false
+    private var miniArtAlbumId = Long.MIN_VALUE
+
+    private val permLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            if (result[audioPermission()] == true) app.refreshLibrary()
+        }
+
+    private val deleteLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (result.resultCode == RESULT_OK) app.refreshLibrary()
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        setSupportActionBar(binding.toolbar)
+        setupActionBarWithNavController(navController, appBarConfig)
+        addGlobalMenu()
+        navController.addOnDestinationChangedListener { _, dest, args ->
+            // The full player screen already shows the deck, so hide the mini-player there.
+            onPlayerScreen = dest.id == R.id.playerFragment
+            updateMiniVisibility()
+            // Under the folder name, show the path down to (but not including) this folder.
+            supportActionBar?.subtitle =
+                if (dest.id == R.id.folderTreeFragment) breadcrumbFor(args?.getString("folderPath").orEmpty())
+                else null
+        }
+
+        player = PlayerConnection(this)
+        player.onQueueEnded = { advanceToNextFolder() }
+        player.onQueueStart = { advanceToPrevFolder() }
+        setupMiniPlayer()
+        ensureAudioPermission()
+
+        // Launched ONCE here (not in onStart): repeatOnLifecycle already stops/restarts the
+        // collection across background/foreground, whereas launching from onStart would add
+        // one more never-completing collector per foreground cycle — unbounded growth.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                player.state.collect { bindMiniPlayer(it) }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        player.connect {
+            if (!player.isQueueEmpty()) openPlayerOnce() else maybeRestorePlayback()
+        }
+    }
+
+    /** After the app is reopened with no live playback, reload the last saved queue (paused). */
+    private fun maybeRestorePlayback() {
+        val saved = player.loadSavedState() ?: return
+        lifecycleScope.launch {
+            val byId = repository.allTracks().associateBy { it.id }
+            // Keep tracks + enqueued flags aligned while dropping any tracks that no longer exist.
+            val enqSet = saved.enqueuedIndices.toSet()
+            val tracks = ArrayList<com.timbra.data.model.Track>()
+            val enqueuedFlags = ArrayList<Boolean>()
+            saved.trackIds.forEachIndexed { i, id ->
+                val t = byId[id] ?: return@forEachIndexed
+                tracks.add(t)
+                enqueuedFlags.add(i in enqSet)
+            }
+            if (tracks.isNotEmpty()) {
+                // Some saved tracks may be gone (deleted/rescanned); remap the index to the
+                // surviving position of the track that was actually current.
+                val currentId = saved.trackIds.getOrNull(saved.index)
+                val index = tracks.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+                player.restore(tracks, enqueuedFlags, index, saved.positionMs,
+                    saved.shuffleOrdinal, saved.repeatOrdinal)
+                openPlayerOnce()
+            }
+        }
+    }
+
+    /** On a cold launch, open the full player once if there is a current song. */
+    private fun openPlayerOnce() {
+        if (app.openedPlayerThisLaunch) return
+        if (navController.currentDestination?.id != R.id.libraryFragment) return
+        app.openedPlayerThisLaunch = true
+        navController.navigate(R.id.playerFragment, null, playerNavOptions)
+    }
+
+    /** Search is available from every screen's overflow menu (incl. the player). */
+    private fun addGlobalMenu() = addMenuProvider(object : MenuProvider {
+        override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
+            inflater.inflate(R.menu.menu_global, menu)
+        }
+
+        override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+            R.id.action_search -> {
+                if (navController.currentDestination?.id != R.id.searchFragment) {
+                    navController.navigate(R.id.searchFragment, null, navOptions { launchSingleTop = true })
+                }
+                true
+            }
+            else -> false
+        }
+    })
+
+    /** Open the full player (single top, never stacked). */
+    fun openPlayer() = navController.navigate(R.id.playerFragment, null, playerNavOptions)
+
+    /**
+     * Open [targetDir] as if the user had drilled into it: rebuilds the back stack with
+     * the folder's ancestors (Library → Folders root → … → target) so Back walks up the
+     * folder tree instead of jumping straight back to the Library.
+     */
+    fun openFolderChain(targetDir: String) {
+        if (targetDir.isBlank()) return
+        lifecycleScope.launch {
+            val root = repository.folderRoot()
+            val rel = if (targetDir.startsWith(root.path)) targetDir.removePrefix(root.path) else ""
+            val segments = rel.split('/').filter { it.isNotEmpty() }
+            // Reset to just the Library, then push the Folders root and each ancestor.
+            navController.navigate(
+                R.id.folderTreeFragment,
+                bundleOf("folderPath" to "", "folderTitle" to getString(R.string.cat_folders)),
+                navOptions { popUpTo(R.id.libraryFragment) { inclusive = false } },
+            )
+            var path = root.path
+            for (seg in segments) {
+                path = "$path/$seg"
+                navController.navigate(
+                    R.id.folderTreeFragment,
+                    bundleOf("folderPath" to path, "folderTitle" to seg),
+                )
+            }
+        }
+    }
+
+    /** Friendly ancestor path (storage prefix stripped) shown under the folder name. */
+    private fun breadcrumbFor(folderPath: String): String? {
+        if (folderPath.isBlank()) return null
+        val parent = folderPath.substringBeforeLast('/', "")
+        val friendly = parent
+            .replaceFirst(Regex("^/storage/emulated/\\d+/?"), "")
+            .replaceFirst(Regex("^/storage/[^/]+/?"), "")
+            .trim('/')
+        return friendly.ifBlank { null }
+    }
+
+    /**
+     * Advance-List repeat: continue with the next sibling folder. Triggered when the queue
+     * ends on its own or when Next is pressed on the last song (fire-and-forget).
+     */
+    fun advanceToNextFolder() { lifecycleScope.launch { advanceFolder(forward = true) } }
+
+    /** Advance-List: continue with the previous sibling folder (fire-and-forget). */
+    fun advanceToPrevFolder() { lifecycleScope.launch { advanceFolder(forward = false) } }
+
+    /**
+     * Jump to the next ([forward] = true) or previous sibling folder — next folder from its
+     * first song, previous folder from its last. Returns false (a no-op) when there is no such
+     * folder or nothing is playing, so a caller tracking a pending advance can recover.
+     * Preserves play/pause: a queue that ended on its own keeps playing (playWhenReady is still
+     * set), a manual Next/swipe advance from a paused song stays paused.
+     */
+    suspend fun advanceFolder(forward: Boolean): Boolean {
+        val dir = player.state.value.filePath.ifBlank { return false }.substringBeforeLast('/', "")
+        val tracks = siblingFolderTracks(dir, if (forward) +1 else -1)
+        if (tracks.isEmpty()) return false
+        player.play(tracks, if (forward) 0 else tracks.lastIndex, play = false)
+        return true
+    }
+
+    /**
+     * The neighbour-folder songs used for Advance-List phantom art in one folder-tree lookup:
+     * (previous folder's last song, next folder's first song), either null if absent. Uses
+     * minWith/maxWith rather than sorting each whole folder just to read one end.
+     */
+    suspend fun neighbourFolderSongs(dir: String): Pair<com.timbra.data.model.Track?, com.timbra.data.model.Track?> {
+        val siblings = siblingsOf(dir) ?: return null to null
+        val (list, idx) = siblings
+        val cmp = comparatorFor(SortDefaults.FOLDER_SONGS)
+        val prevLast = list.getOrNull(idx - 1)?.let { FolderTreeBuilder.flatten(it).maxWithOrNull(cmp) }
+        val nextFirst = list.getOrNull(idx + 1)?.let { FolderTreeBuilder.flatten(it).minWithOrNull(cmp) }
+        return prevLast to nextFirst
+    }
+
+    /** Tracks of the sibling folder [step] positions from [dir] (±1), sorted for playback. */
+    private suspend fun siblingFolderTracks(dir: String, step: Int): List<com.timbra.data.model.Track> {
+        val (list, idx) = siblingsOf(dir) ?: return emptyList()
+        val sibling = list.getOrNull(idx + step) ?: return emptyList()
+        return FolderTreeBuilder.flatten(sibling).sortedBy(SortDefaults.FOLDER_SONGS)
+    }
+
+    /** The sorted sibling folders of [dir]'s folder plus [dir]'s index among them, or null. */
+    private suspend fun siblingsOf(dir: String): Pair<List<com.timbra.data.model.FolderNode>, Int>? {
+        if (dir.isBlank()) return null
+        val root = repository.folderRoot()
+        val parent = FolderTreeBuilder.find(root, dir.substringBeforeLast('/', "")) ?: return null
+        val siblings = parent.childFolders.sortedBy { it.name.lowercase() }
+        val idx = siblings.indexOfFirst { it.path == dir }
+        return if (idx < 0) null else siblings to idx
+    }
+
+    /** Delete files from storage (system shows its own confirmation on API 30+). */
+    fun requestDelete(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val pi = MediaStore.createDeleteRequest(contentResolver, uris)
+            deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+        } else {
+            uris.forEach { runCatching { contentResolver.delete(it, null, null) } }
+            app.refreshLibrary()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        player.release()
+    }
+
+    override fun onSupportNavigateUp(): Boolean =
+        navController.navigateUp(appBarConfig) || super.onSupportNavigateUp()
+
+    // --- Mini player ---
+
+    private fun setupMiniPlayer() = with(binding.miniPlayer) {
+        root.setOnClickListener { openPlayer() }
+        miniPlay.setOnClickListener { player.togglePlayPause() }
+        miniNext.setOnClickListener { player.next() }
+        miniPrev.setOnClickListener { player.previous() }
+        // Drag the mini timeline to seek.
+        miniSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser) miniPosition.text = Format.clock(progress.toLong())
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) { miniUserSeeking = true }
+            override fun onStopTrackingTouch(sb: SeekBar) {
+                miniUserSeeking = false
+                player.seekTo(sb.progress.toLong())
+            }
+        })
+    }
+
+    private fun updateMiniVisibility() {
+        binding.miniPlayer.root.isVisible = lastPlayback.hasItem && !onPlayerScreen
+    }
+
+    private fun bindMiniPlayer(s: UiPlayback) = with(binding.miniPlayer) {
+        lastPlayback = s
+        updateMiniVisibility()
+        if (!s.hasItem) { miniArtAlbumId = Long.MIN_VALUE; return }
+        miniTitle.text = s.title.ifBlank { getString(R.string.nothing_playing) }
+        miniSubtitle.text = s.artist
+        miniPlay.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)
+        miniSeek.max = s.durationMs.toInt().coerceAtLeast(1)
+        miniDuration.text = Format.clock(s.durationMs)
+        if (!miniUserSeeking) {
+            miniSeek.progress = s.positionMs.toInt().coerceIn(0, miniSeek.max)
+            miniPosition.text = Format.clock(s.positionMs)
+        }
+        // Only (re)load the cover when the track actually changes, otherwise it flickers
+        // on every 500ms position tick.
+        if (s.albumId != miniArtAlbumId) {
+            miniArtAlbumId = s.albumId
+            ArtLoader.load(miniArt, this@MainActivity, null, s.albumId, R.drawable.matte_album_96)
+        }
+    }
+
+    // --- Permissions ---
+
+    private fun audioPermission(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            Manifest.permission.READ_MEDIA_AUDIO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private fun ensureAudioPermission() {
+        val needed = buildList {
+            if (ContextCompat.checkSelfPermission(this@MainActivity, audioPermission())
+                != PackageManager.PERMISSION_GRANTED
+            ) add(audioPermission())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (needed.isEmpty()) app.refreshLibrary() else permLauncher.launch(needed.toTypedArray())
+    }
+}

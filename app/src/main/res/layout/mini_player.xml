@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mini_player_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/deck_bg"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <ImageView
+            android:id="@+id/mini_art"
+            android:layout_width="46dp"
+            android:layout_height="46dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/matte_album_96"
+            android:contentDescription="@string/cd_album_art" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/mini_title"
+                style="@style/Tb.ListTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/nothing_playing" />
+
+            <TextView
+                android:id="@+id/mini_subtitle"
+                style="@style/Tb.ListSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/mini_prev"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter"
+            android:padding="10dp"
+            android:src="@drawable/deck_prev"
+            android:contentDescription="@string/cd_prev" />
+
+        <ImageButton
+            android:id="@+id/mini_play"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter"
+            android:padding="6dp"
+            android:src="@drawable/deck_play"
+            android:contentDescription="@string/cd_play" />
+
+        <ImageButton
+            android:id="@+id/mini_next"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter"
+            android:padding="10dp"
+            android:src="@drawable/deck_next"
+            android:contentDescription="@string/cd_next" />
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/mini_seek"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="-2dp"
+        android:layout_marginEnd="-2dp"
+        android:paddingStart="0dp"
+        android:paddingEnd="0dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:maxHeight="4dp"
+        android:progressDrawable="@drawable/seek_progress"
+        android:thumb="@null"
+        android:splitTrack="false" />
+
+    <!-- Position / duration below the timeline; keeps the seekbar out of the bottom
+         system-gesture zone and leaves the very bottom edge non-interactive. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="14dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/mini_position"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/pa_text_secondary"
+            android:textSize="11sp"
+            android:text="0:00" />
+
+        <TextView
+            android:id="@+id/mini_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/pa_text_secondary"
+            android:textSize="11sp"
+            android:text="0:00" />
+    </LinearLayout>
+</LinearLayout>
