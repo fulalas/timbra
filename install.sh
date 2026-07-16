@@ -1,10 +1,7 @@
 #!/bin/bash
 # Clean-install the latest built Timbra APK on the connected device and restore the
 # home-screen shortcut the user pinned. Clean install (uninstall+install) is intentional.
-#
-# The shortcut is re-created directly in AOSP Launcher3's favorites DB (dev phone is a
-# rooted userdebug GSI). Position is fixed: screen 0, cell (cellX=1, cellY=4) = row 3 /
-# column 2, between Strava and IronFox.
+
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
