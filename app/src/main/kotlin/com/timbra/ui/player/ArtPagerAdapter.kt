@@ -2,6 +2,7 @@ package com.timbra.ui.player
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.view.isVisible
 import androidx.lifecycle.LifecycleOwner
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -30,7 +31,10 @@ class ArtPagerAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = getItem(position)
-        ArtLoader.load(holder.b.pageArt, owner, null, item.albumId, R.drawable.matte_album_240)
+        // Pages without art show the glowing app mark instead of a generic placeholder.
+        ArtLoader.load(holder.b.pageArt, owner, null, item.albumId) { has ->
+            holder.b.pageBrand.isVisible = !has
+        }
     }
 
     companion object {

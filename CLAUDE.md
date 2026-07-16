@@ -35,7 +35,8 @@ It writes `local.properties`, builds, then copies the APK to the **repo root** a
 
 A device is reachable over adb (`adb devices`). The dev phone is an **arm64 Treble GSI**.
 ```bash
-./install.sh   # CLEAN install (uninstall+install) + restores the home-screen shortcut
+./install.sh           # UPDATE in place (adb install -r); data + shortcut survive
+./install.sh --clean   # fresh install (uninstall+install) + restores the home-screen shortcut
 # manual:
 adb install -r <app>-<version>.apk
 adb shell am start -n com.timbra/.ui.MainActivity

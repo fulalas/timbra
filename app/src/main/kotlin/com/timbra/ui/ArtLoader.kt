@@ -42,16 +42,24 @@ object ArtLoader {
         cache.evictAll()
     }
 
+    /**
+     * Load [albumId]'s art into [view]. There is deliberately NO placeholder image
+     * (Poweramp-style): [onArt] reports whether art exists so the caller can hide the
+     * view or show a brand mark instead. It may fire twice — false immediately (view
+     * cleared, nothing decoded yet), then true if the async decode lands (tag-guarded
+     * against view reuse).
+     */
     fun load(
         view: ImageView,
         owner: LifecycleOwner,
         trackUri: Uri?,
         albumId: Long,
-        placeholderRes: Int,
+        onArt: (Boolean) -> Unit = {},
     ) {
         view.setTag(R.id.art_tag, albumId)
-        cache.get(albumId)?.let { view.setImageBitmap(it); return }
-        view.setImageResource(placeholderRes)
+        cache.get(albumId)?.let { view.setImageBitmap(it); onArt(true); return }
+        view.setImageDrawable(null)
+        onArt(false)
         if (trackUri == null && albumId < 0) return
         if (albumId >= 0 && albumId in misses) return
 
@@ -59,7 +67,10 @@ object ArtLoader {
             val bmp = withContext(Dispatchers.IO) { decode(view, trackUri, albumId) }
             if (bmp != null) {
                 cache.put(albumId, bmp)
-                if (view.getTag(R.id.art_tag) == albumId) view.setImageBitmap(bmp)
+                if (view.getTag(R.id.art_tag) == albumId) {
+                    view.setImageBitmap(bmp)
+                    onArt(true)
+                }
             } else if (albumId >= 0) {
                 misses.add(albumId)
             }

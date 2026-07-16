@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ViewGroup
+import androidx.core.view.isInvisible
 import androidx.lifecycle.LifecycleOwner
 import androidx.recyclerview.widget.RecyclerView
 import com.timbra.R
@@ -60,7 +61,9 @@ class QueueAdapter(
         // Already-played queue items stay in the list but dimmed.
         holder.b.root.alpha = if (played) 0.4f else 1f
         applyNowPlaying(holder.b.root, holder.b.title, playing)
-        ArtLoader.load(holder.b.thumb, owner, null, item.albumId, R.drawable.matte_album_96)
+        // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not
+        // GONE) so every row's text stays aligned in a mixed queue.
+        ArtLoader.load(holder.b.thumb, owner, null, item.albumId) { holder.b.thumb.isInvisible = !it }
         holder.b.root.setOnClickListener { onClick(item.timelineIndex) }
         holder.b.root.setOnLongClickListener { onLong(item); true }
         holder.b.dragHandle.setOnTouchListener { _, e ->

@@ -145,5 +145,5 @@ if [ -n "$BUILT" ]; then
     echo
     log "APK output"
     ls -lh "$OUT"
-    echo "Install with: adb install -r $OUT   (or ./install.sh for a clean install)"
+    echo "Install with: adb install -r $OUT   (or ./install.sh; --clean for a fresh install)"
 fi

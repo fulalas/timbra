@@ -1,11 +1,17 @@
 package com.timbra.player
 
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -22,6 +28,25 @@ class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
+    /**
+     * Service-side position persistence. The UI's PlayerConnection saves the position on
+     * its own lifecycle events, but once the activity is gone the service can play for
+     * hours with nobody recording progress — a later cold-start restore would then rewind
+     * to wherever the SCREEN was last closed. So the service itself checkpoints the
+     * position every few seconds while playing, on every pause, and at shutdown.
+     */
+    private lateinit var store: PlaybackStateStore
+    private val saveHandler = Handler(Looper.getMainLooper())
+    private val positionSaver = object : Runnable {
+        override fun run() {
+            val player = mediaSession?.player ?: return
+            if (player.mediaItemCount > 0) {
+                store.savePosition(player.currentMediaItemIndex, player.currentPosition.coerceAtLeast(0))
+            }
+            if (player.isPlaying) saveHandler.postDelayed(this, POSITION_SAVE_INTERVAL_MS)
+        }
+    }
+
     // --- Custom shuffle engine ---
     // ExoPlayer's built-in shuffle is a fixed permutation, so Prev/Next just retrace it and can
     // revisit songs. Instead we drive ExoPlayer's shuffle ORDER ourselves so that: Next always
@@ -37,6 +62,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        store = PlaybackStateStore(this)
 
         // EXTENSION_RENDERER_MODE_ON: prefer the platform MediaCodec decoders (which do
         // true gapless — they read/trim encoder delay+padding) and fall back to the FFmpeg
@@ -57,6 +83,13 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Checkpoint now (captures the exact pause point), then keep checkpointing
+                // on an interval while playing — the runnable reschedules itself.
+                saveHandler.removeCallbacks(positionSaver)
+                saveHandler.post(positionSaver)
+            }
+
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 if (shuffleModeEnabled) resetShuffleSession(player)
             }
@@ -78,6 +111,22 @@ class PlaybackService : MediaSessionService() {
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
                 ) return
                 onShuffleAdvance(player, player.currentMediaItemIndex)
+            }
+        })
+
+        // Publish the DECODED audio format (sample rate / bitrate) to controllers through
+        // the session extras — MediaController exposes no other way to read it, and only
+        // the service-side ExoPlayer knows the real values.
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?,
+            ) {
+                mediaSession?.setSessionExtras(Bundle().apply {
+                    putInt(EXTRA_SAMPLE_RATE, format.sampleRate)
+                    putInt(EXTRA_BITRATE, format.bitrate)
+                })
             }
         })
 
@@ -167,11 +216,26 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        saveHandler.removeCallbacks(positionSaver)
+        // Final checkpoint before the player goes away, so a cold start resumes exactly here.
+        mediaSession?.player?.let { p ->
+            if (p.mediaItemCount > 0) {
+                store.savePosition(p.currentMediaItemIndex, p.currentPosition.coerceAtLeast(0))
+            }
+        }
         mediaSession?.run {
             player.release()
             release()
         }
         mediaSession = null
         super.onDestroy()
+    }
+
+    companion object {
+        private const val POSITION_SAVE_INTERVAL_MS = 5_000L
+
+        /** Session-extras keys carrying the decoded audio format to the UI. */
+        const val EXTRA_SAMPLE_RATE = "tb_sample_rate"
+        const val EXTRA_BITRATE = "tb_bitrate"
     }
 }

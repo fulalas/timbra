@@ -73,9 +73,9 @@ directly over adb without keystore setup.
 ./install.sh
 ```
 
-`install.sh` does a **clean install** (uninstall + install) of the most recently built APK
-and launches nothing else. It finds `adb` through the same toolchain resolution as
-`build.sh`. To install manually:
+`install.sh` **updates in place** (`adb install -r`) with the most recently built APK, so
+app data survives; pass `--clean` for a fresh install (uninstall + install). It finds
+`adb` through the same toolchain resolution as `build.sh`. To install manually:
 
 ```bash
 adb install -r timbra-<version>.apk

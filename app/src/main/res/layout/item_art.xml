@@ -1,9 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/page_art"
+<!-- One album-art deck page. No generic placeholder: when a song has no cover art the
+     glowing app mark is shown instead (Poweramp-style), toggled by ArtPagerAdapter. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:scaleType="fitCenter"
-    android:padding="8dp"
-    android:src="@drawable/matte_album_240"
-    android:contentDescription="@string/cd_album_art" />
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/page_art"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:padding="8dp"
+        android:contentDescription="@string/cd_album_art" />
+
+    <TextView
+        android:id="@+id/page_brand"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="@string/app_name"
+        android:textAllCaps="true"
+        android:textColor="@color/pa_text_primary"
+        android:textSize="40sp"
+        android:textStyle="bold|italic"
+        android:letterSpacing="0.06"
+        android:shadowColor="@color/pa_accent_glow"
+        android:shadowRadius="22"
+        android:shadowDx="0"
+        android:shadowDy="0"
+        android:visibility="gone" />
+</FrameLayout>

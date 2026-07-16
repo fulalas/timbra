@@ -12,11 +12,11 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
+    <!-- Controls sit straight on the pure-black window (no deck_bg panel). -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@drawable/deck_bg"
         android:paddingHorizontal="16dp"
         android:paddingTop="12dp"
         android:paddingBottom="18dp">
@@ -127,8 +127,8 @@
 
             <ImageButton
                 android:id="@+id/play"
-                android:layout_width="96dp"
-                android:layout_height="96dp"
+                android:layout_width="77dp"
+                android:layout_height="77dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:scaleType="fitCenter"
                 android:layout_marginHorizontal="8dp"
@@ -161,5 +161,15 @@
                 android:src="@drawable/matte_shuffle_none"
                 android:contentDescription="@string/cd_shuffle" />
         </LinearLayout>
+
+        <!-- Decoded audio format (sample rate / bitrate / container), Poweramp-style. -->
+        <TextView
+            android:id="@+id/audio_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:textColor="@color/pa_text_tertiary"
+            android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

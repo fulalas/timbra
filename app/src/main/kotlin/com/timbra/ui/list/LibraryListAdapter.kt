@@ -2,6 +2,7 @@ package com.timbra.ui.list
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.lifecycle.LifecycleOwner
 import androidx.recyclerview.widget.RecyclerView
@@ -90,7 +91,9 @@ class LibraryListAdapter(
             b.duration.text = Format.clock(t.durationMs)
             applyNowPlaying(b.root, b.title, playing)
             b.nowPlayingBar.isVisible = playing
-            ArtLoader.load(b.thumb, owner, t.uri, t.albumId, R.drawable.matte_album_96)
+            // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not
+            // GONE) so every row's text stays aligned in a mixed list.
+            ArtLoader.load(b.thumb, owner, t.uri, t.albumId) { b.thumb.isInvisible = !it }
             b.root.setOnClickListener { onTrack(item.indexInList) }
             b.root.setOnLongClickListener { onLongItem(item); true }
         }

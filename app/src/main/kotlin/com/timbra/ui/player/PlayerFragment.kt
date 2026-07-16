@@ -139,8 +139,11 @@ class PlayerFragment : Fragment() {
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        // No title text on the player — just the back arrow.
+        // Next to the back arrow the player shows the playing song's folder path ([bind]
+        // keeps it current); blank until the first state arrives. Reset the cached path so
+        // a recreated view re-applies the title even when the song didn't change.
         (requireActivity() as androidx.appcompat.app.AppCompatActivity).supportActionBar?.title = ""
+        currentFilePath = ""
 
         // The fragment instance survives on the back stack but the pager view is fresh
         // (position 0), so reset all transient pager/advance state — otherwise stale flags
@@ -371,6 +374,9 @@ class PlayerFragment : Fragment() {
                 // didn't reset the flag. Snap the first realignment after every foreground
                 // entry too, otherwise the re-emit animates a card flip for no reason.
                 pagerSynced = false
+                // Forget the applied title so the re-emit re-sets it — the path should
+                // marquee-scroll on EVERY entry to this screen, foreground returns included.
+                currentFilePath = ""
                 launch { player.queue.collect { bindQueue(it) } }
                 launch { player.state.collect { bind(it) } }
             }
@@ -706,7 +712,21 @@ class PlayerFragment : Fragment() {
     }
 
     private fun bind(s: UiPlayback) {
-        currentFilePath = s.filePath
+        if (s.filePath != currentFilePath) {
+            currentFilePath = s.filePath
+            // The toolbar shows the playing song's folder path, relative to the library
+            // root (common to every song, so it says nothing) and without the file name
+            // (already told by the song info below the deck).
+            val dir = s.filePath.substringBeforeLast('/', "")
+            viewLifecycleOwner.lifecycleScope.launch {
+                val title = (requireActivity() as MainActivity).libraryRelativePath(dir) ?: ""
+                // A newer song may have bound while the root was being looked up.
+                if (_b != null && currentFilePath == s.filePath) {
+                    // Long paths marquee once (and again on tap) instead of ellipsizing.
+                    (requireActivity() as MainActivity).setMarqueeTitle(title)
+                }
+            }
+        }
 
         // Animate the card-flip only on a real track change (the playing SONG changed), keyed
         // on mediaId not queueIndex: repeat/shuffle toggles, phantom add/remove, and queue
@@ -747,6 +767,8 @@ class PlayerFragment : Fragment() {
         b.play.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)
         b.shuffle.setImageResource(s.shuffle.iconRes)
         b.repeat.setImageResource(s.repeat.iconRes)
+
+        b.audioInfo.text = if (s.hasItem) Format.audioInfo(s.sampleRateHz, s.bitrateBps, s.filePath) else ""
 
         b.duration.text = Format.clock(s.durationMs)
         b.seek.max = s.durationMs.toInt().coerceAtLeast(1)

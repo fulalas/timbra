@@ -13,7 +13,6 @@
         android:layout_width="@dimen/pa_row_thumb"
         android:layout_height="@dimen/pa_row_thumb"
         android:scaleType="fitCenter"
-        android:src="@drawable/matte_album_96"
         android:contentDescription="@null" />
 
     <LinearLayout

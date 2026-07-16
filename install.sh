@@ -1,9 +1,14 @@
 #!/bin/bash
-# Clean-install the latest built Timbra APK on the connected device and restore the
-# home-screen shortcut the user pinned. Clean install (uninstall+install) is intentional.
+# Install the latest built Timbra APK on the connected device. Default is an in-place
+# UPDATE (adb install -r): app data and the pinned home-screen shortcut survive.
+# Pass --clean to force a fresh install (uninstall + install), which also restores the
+# home-screen shortcut that the uninstall wipes.
 
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
+
+CLEAN=0
+[ "$1" = "--clean" ] && CLEAN=1
 
 # Same toolchain resolution order as build.sh (for adb); falls back to adb on PATH.
 if [ -n "$TIMBRA_ENV" ] && [ -f "$TIMBRA_ENV" ]; then
@@ -19,6 +24,13 @@ NAME_LC=$(echo "${NAME:-app}" | tr '[:upper:]' '[:lower:]')
 PKG=$(sed -n 's/.*applicationId *= *"\(.*\)".*/\1/p' "$DIR/app/build.gradle.kts")
 APK=$(ls -t "$DIR/${NAME_LC}-"*.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && { echo "No $NAME_LC-*.apk at repo root — run ./build.sh first."; exit 1; }
+
+if [ "$CLEAN" != 1 ]; then
+    echo "== Updating $(basename "$APK") as $PKG =="
+    adb install -r "$APK"
+    echo "== Updated. Launch: adb shell am start -n ${PKG}/.ui.MainActivity =="
+    exit 0
+fi
 
 echo "== Clean-installing $(basename "$APK") as $PKG =="
 adb uninstall "$PKG" >/dev/null 2>&1 || true

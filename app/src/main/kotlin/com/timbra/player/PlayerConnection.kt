@@ -32,6 +32,9 @@ data class UiPlayback(
     val queueIndex: Int = -1,
     val shuffle: ShuffleMode = ShuffleMode.OFF,
     val repeat: RepeatMode = RepeatMode.OFF,
+    /** Decoded audio format (from the service via session extras); 0/-1 when unknown. */
+    val sampleRateHz: Int = 0,
+    val bitrateBps: Int = 0,
 )
 
 /** One entry in the play timeline, used to page album art and show the Queue list. */
@@ -151,18 +154,35 @@ class PlayerConnection(private val context: Context) {
         }
     }
 
+    /** Decoded audio format published by the service (see [PlaybackService] extras). */
+    private var sampleRateHz = 0
+    private var bitrateBps = 0
+
+    private fun readAudioFormat(extras: android.os.Bundle) {
+        sampleRateHz = extras.getInt(PlaybackService.EXTRA_SAMPLE_RATE, 0)
+        bitrateBps = extras.getInt(PlaybackService.EXTRA_BITRATE, 0)
+    }
+
     fun connect(onReady: () -> Unit = {}) {
         if (controller != null) {
             onReady(); return
         }
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
+        val future = MediaController.Builder(context, token)
+            .setListener(object : MediaController.Listener {
+                override fun onExtrasChanged(controller: MediaController, extras: android.os.Bundle) {
+                    readAudioFormat(extras)
+                    pushState()
+                }
+            })
+            .buildAsync()
         controllerFuture = future
         future.addListener({
             // release() may have cancelled the future before it resolved; get() would throw.
             if (future.isCancelled) return@addListener
             controller = runCatching { future.get() }.getOrNull()?.also { it.addListener(listener) }
                 ?: return@addListener
+            readAudioFormat(controller!!.sessionExtras)
             pushState()
             rebuildQueue()
             onReady()
@@ -561,6 +581,8 @@ class PlayerConnection(private val context: Context) {
             queueIndex = c.currentMediaItemIndex,
             shuffle = appShuffle,
             repeat = appRepeat,
+            sampleRateHz = sampleRateHz,
+            bitrateBps = bitrateBps,
         )
     }
 
