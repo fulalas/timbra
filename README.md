@@ -70,9 +70,7 @@ directly over adb without keystore setup.
 
 `install.sh` does a **clean install** (uninstall + install) of the most recently built APK
 and launches nothing else. It finds `adb` through the same toolchain resolution as
-`build.sh`. On the primary dev phone (a rooted userdebug GSI with AOSP Launcher3) it also
-restores a home-screen shortcut at a fixed position; on any other device it simply skips
-that step with a warning. To install manually:
+`build.sh`. To install manually:
 
 ```bash
 adb install -r timbra-<version>.apk
