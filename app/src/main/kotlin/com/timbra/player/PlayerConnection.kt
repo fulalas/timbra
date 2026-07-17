@@ -184,6 +184,10 @@ class PlayerConnection(private val context: Context) {
                 ?: return@addListener
             readAudioFormat(controller!!.sessionExtras)
             pushState()
+            // A fresh controller doesn't replay events, so if a song is already playing the
+            // listener won't fire to start the ticker — kick it here (it self-stops when paused).
+            handler.removeCallbacks(ticker)
+            handler.post(ticker)
             rebuildQueue()
             onReady()
         }, MoreExecutors.directExecutor())

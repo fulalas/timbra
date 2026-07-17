@@ -16,11 +16,20 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library toolbar subtitle) and in the output APK filename.
-        versionCode = 73
-        versionName = "0.6.8"
+        versionCode = 74
+        versionName = "0.6.9"
 
         // Generate R.string.app_name from `appName` so the name isn't duplicated in strings.xml.
         resValue("string", "app_name", appName)
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("key.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
