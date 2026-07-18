@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import android.text.TextUtils
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
@@ -18,7 +17,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.os.bundleOf
 import androidx.core.view.MenuProvider
-import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -100,12 +98,9 @@ class MainActivity : AppCompatActivity() {
             // title view to its stock state — end-ellipsis and NOT horizontally scrolling,
             // else long titles on other screens clip with no "…" (the scrolling flag leaks).
             if (dest.id != R.id.playerFragment) {
-                titleScroll = null
+                toolbarMarquee?.stop()
                 binding.toolbar.post {
                     toolbarTitleView()?.apply {
-                        setHorizontallyScrolling(false)
-                        ellipsize = TextUtils.TruncateAt.END
-                        scrollTo(0, 0)
                         setOnClickListener(null)
                         isClickable = false
                     }
@@ -231,87 +226,23 @@ class MainActivity : AppCompatActivity() {
         .trim('/')
         .ifBlank { null }
 
-    /** The in-flight title marquee run; replacing it cancels the old one. */
-    private var titleScroll: Runnable? = null
-
-    /** The clean (single) title, so a tap or a re-run never doubles an already-doubled
-     *  string, and leaving the screen can restore it (see [toolbarTitleView] users). */
-    private var titleText: String = ""
+    /** Drives the toolbar title marquee; bound lazily to the Toolbar's (shared) title view. */
+    private var toolbarMarquee: TitleMarquee? = null
 
     /**
      * Set the toolbar title and marquee-scroll it ONCE when it doesn't fit (long folder
-     * paths on the player); tapping the title scrolls it once more. Hand-rolled on
-     * postOnAnimation rather than the stock TextView marquee: the stock speed is a fixed
-     * private constant (we want it faster), and frame-stepped scrolling also ignores the
-     * dev device's zeroed animator scales.
+     * paths on the player); tapping the title scrolls it once more. The Toolbar owns the
+     * title text (via the action bar) but reuses one internal TextView, so the marquee
+     * controller is rebound only if that view instance actually changes.
      */
     fun setMarqueeTitle(title: String) {
-        titleText = title
         supportActionBar?.title = title
         binding.toolbar.post {
             val tv = toolbarTitleView() ?: return@post
-            tv.ellipsize = null // ellipsizing would shrink the text layout; we scroll it
-            tv.setHorizontallyScrolling(true)
-            scrollTitleOnce(tv)
-            tv.setOnClickListener { scrollTitleOnce(tv) }
-        }
-    }
-
-    /**
-     * Marquee the title ONE full loop, then stop — the beginning scrolls off the left and
-     * wraps around from the right, landing back at rest (no jarring snap-to-start).
-     *
-     * A plain TextView can't draw a wrap-around ghost, so we give it a doubled string
-     * ("title <gap> title") and scroll by exactly one copy+gap: at the end the SECOND copy
-     * sits precisely where the first began, so restoring the single title is invisible.
-     *
-     * [doOnLayout] is the readiness signal — setting the title invalidates the text layout
-     * and schedules a re-layout; measuring before it runs (the screen-entry case) would
-     * read a stale width as "fits" and never start. It fires immediately when already laid
-     * out (the tap case).
-     */
-    private fun scrollTitleOnce(tv: TextView) {
-        titleScroll = null
-        tv.text = titleText // reset in case a prior interrupted run left it doubled
-        tv.scrollTo(0, 0)
-        tv.doOnLayout {
-            val viewport = tv.width - tv.paddingLeft - tv.paddingRight
-            val lineWidth = tv.paint.measureText(titleText)
-            if (lineWidth <= viewport) { titleScroll = null; return@doOnLayout } // fits — no scroll
-
-            // Ghost copy separated by a gap, so the wrap reads as one continuous loop.
-            val gapPx = TITLE_MARQUEE_GAP_DP * resources.displayMetrics.density
-            val spaceW = tv.paint.measureText(" ").coerceAtLeast(1f)
-            val nSpaces = (gapPx / spaceW).toInt().coerceAtLeast(1)
-            val doubled = titleText + " ".repeat(nSpaces) + titleText
-            tv.text = doubled
-            // The wrap point: distance to bring the second copy's start to the left edge.
-            val distance = lineWidth + nSpaces * spaceW
-            val outMs = distance / (TITLE_MARQUEE_DP_S * resources.displayMetrics.density / 1000f)
-            val t0 = android.view.animation.AnimationUtils.currentAnimationTimeMillis()
-            val run = object : Runnable {
-                override fun run() {
-                    // Die out when replaced, or when navigation swapped the title underneath.
-                    if (titleScroll !== this || tv.text !== doubled) return
-                    val t = android.view.animation.AnimationUtils.currentAnimationTimeMillis() - t0
-                    if (t < TITLE_MARQUEE_START_HOLD_MS) { // brief readable pause on the start
-                        tv.postOnAnimation(this); return
-                    }
-                    val p = (t - TITLE_MARQUEE_START_HOLD_MS) / outMs
-                    if (p < 1f) {
-                        tv.scrollTo((distance * p).toInt(), 0)
-                        tv.postOnAnimation(this)
-                    } else {
-                        // Landed on the second copy's start = identical to the first at rest;
-                        // restore the single title and snap to 0, seamless.
-                        tv.text = titleText
-                        tv.scrollTo(0, 0)
-                        titleScroll = null
-                    }
-                }
-            }
-            titleScroll = run
-            tv.postOnAnimation(run)
+            val marquee = toolbarMarquee?.takeIf { it.view === tv }
+                ?: TitleMarquee(tv).also { toolbarMarquee = it }
+            marquee.set(title)
+            tv.setOnClickListener { marquee.scrollOnce() }
         }
     }
 
@@ -546,14 +477,4 @@ class MainActivity : AppCompatActivity() {
         if (needed.isEmpty()) app.refreshLibrary() else permLauncher.launch(needed.toTypedArray())
     }
 
-    private companion object {
-        /** Title marquee speed (dp/s). Stock TextView marquee is 30dp/s; this is faster. */
-        const val TITLE_MARQUEE_DP_S = 53.3f
-
-        /** Gap between the end of the title and its wrapped-around start, during the loop. */
-        const val TITLE_MARQUEE_GAP_DP = 48f
-
-        /** Brief readable pause on the start before the loop begins. */
-        const val TITLE_MARQUEE_START_HOLD_MS = 500L
-    }
 }

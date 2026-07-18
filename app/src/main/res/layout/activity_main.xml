@@ -6,11 +6,14 @@
     android:orientation="vertical"
     android:background="@color/pa_window">
 
+    <!-- Height grows to fit a two-line title+subtitle (long folder breadcrumbs), which a
+         fixed 56dp clips at the descenders; single-line screens stay at the min height. -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         style="@style/Tb.Toolbar"
         android:layout_width="match_parent"
-        android:layout_height="@dimen/pa_toolbar_height" />
+        android:layout_height="wrap_content"
+        android:minHeight="@dimen/pa_toolbar_height" />
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/nav_host"

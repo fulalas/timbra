@@ -26,6 +26,7 @@ import com.timbra.player.UiPlayback
 import com.timbra.repository
 import com.timbra.ui.Format
 import com.timbra.ui.MainActivity
+import com.timbra.ui.TitleMarquee
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -44,6 +45,13 @@ class PlayerFragment : Fragment() {
 
     private var userSeeking = false
     private var currentFilePath = ""
+
+    /** Marquees the song title when it overflows — same one-loop scroll as the toolbar path,
+     *  but auto only: a tap on the title opens the song's folder ([b.info]), so there's no
+     *  tap-to-replay here. Rebuilt per view; [boundTitle] guards it against restarting on
+     *  every position tick. */
+    private var titleMarquee: TitleMarquee? = null
+    private var boundTitle: String? = null
 
     /**
      * The player's current queue index, read straight from the state flow so it's always
@@ -165,6 +173,8 @@ class PlayerFragment : Fragment() {
         phantomPrev = null
         phantomNext = null
         phantomKey = null
+        titleMarquee = TitleMarquee(b.title)
+        boundTitle = null
 
         artAdapter = ArtPagerAdapter(viewLifecycleOwner)
         b.artPager.adapter = artAdapter
@@ -374,9 +384,11 @@ class PlayerFragment : Fragment() {
                 // didn't reset the flag. Snap the first realignment after every foreground
                 // entry too, otherwise the re-emit animates a card flip for no reason.
                 pagerSynced = false
-                // Forget the applied title so the re-emit re-sets it — the path should
-                // marquee-scroll on EVERY entry to this screen, foreground returns included.
+                // Forget the applied titles so the re-emit re-sets them — both the toolbar
+                // path and the song title should marquee-scroll on EVERY entry to this
+                // screen, foreground returns included.
                 currentFilePath = ""
+                boundTitle = null
                 launch { player.queue.collect { bindQueue(it) } }
                 launch { player.state.collect { bind(it) } }
             }
@@ -760,8 +772,14 @@ class PlayerFragment : Fragment() {
         }
         updatePhantom(s)
 
-        b.title.text = if (s.hasItem) s.title.ifBlank { getString(R.string.app_name) }
+        // Marquee the title only when it actually changes (bind runs every position tick, and
+        // re-setting would restart the scroll from the top each time).
+        val titleText = if (s.hasItem) s.title.ifBlank { getString(R.string.app_name) }
         else getString(R.string.nothing_playing)
+        if (titleText != boundTitle) {
+            boundTitle = titleText
+            titleMarquee?.set(titleText)
+        }
         b.subtitle.text = if (s.hasItem) Format.subtitle(s.artist, s.album) else ""
 
         b.play.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)
@@ -780,6 +798,8 @@ class PlayerFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        titleMarquee?.stop()
+        titleMarquee = null
         _b = null
     }
 
