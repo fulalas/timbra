@@ -8,6 +8,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
@@ -540,6 +541,20 @@ class PlayerConnection(private val context: Context) {
 
     fun currentShuffle(): ShuffleMode = appShuffle
     fun currentRepeat(): RepeatMode = appRepeat
+
+    /**
+     * Push equalizer state to the service-side effect (see [PlaybackService.CMD_APPLY_EQ]) for
+     * live feedback. The equalizer screen persists to [EqSettings] separately; this is the
+     * real-time channel. No-op if the controller isn't connected yet.
+     */
+    fun applyEq(enabled: Boolean, gainsDb: IntArray) {
+        val c = controller ?: return
+        val args = android.os.Bundle().apply {
+            putBoolean(PlaybackService.EXTRA_EQ_ENABLED, enabled)
+            putIntArray(PlaybackService.EXTRA_EQ_GAINS, gainsDb)
+        }
+        c.sendCustomCommand(SessionCommand(PlaybackService.CMD_APPLY_EQ, android.os.Bundle.EMPTY), args)
+    }
 
     private fun rebuildQueue() {
         val c = controller ?: run { _queue.value = emptyList(); return }

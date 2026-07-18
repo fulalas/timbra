@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/pa_window"
+    android:padding="20dp">
+
+    <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/eq_enable"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/eq_enable"
+        android:textColor="@color/pa_text_primary"
+        android:textSize="16sp" />
+
+    <LinearLayout
+        android:id="@+id/bands"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="8dp"
+        android:orientation="horizontal"
+        android:baselineAligned="false" />
+</LinearLayout>

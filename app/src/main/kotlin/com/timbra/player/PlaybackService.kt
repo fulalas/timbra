@@ -1,5 +1,6 @@
 package com.timbra.player
 
+import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,9 +13,15 @@ import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 
 /**
@@ -27,6 +34,9 @@ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
+
+    /** 7-band equalizer DSP spliced into ExoPlayer's audio pipeline (see [EqRenderersFactory]). */
+    private val eqProcessor = EqualizerAudioProcessor()
 
     /**
      * Service-side position persistence. The UI's PlayerConnection saves the position on
@@ -64,11 +74,15 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         store = PlaybackStateStore(this)
 
+        // Apply persisted equalizer settings to the DSP before the pipeline starts.
+        EqSettings(this).let { eqProcessor.update(it.enabled, it.gains()) }
+
         // EXTENSION_RENDERER_MODE_ON: prefer the platform MediaCodec decoders (which do
         // true gapless — they read/trim encoder delay+padding) and fall back to the FFmpeg
         // decoders only for formats the device can't handle natively. PREFER routed every
         // track through FFmpeg, which left an audible gap between songs.
-        val renderers = NextRenderersFactory(this)
+        // EqRenderersFactory splices the equalizer DSP into the audio sink.
+        val renderers = EqRenderersFactory(this)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
 
         val player = ExoPlayer.Builder(this, renderers)
@@ -128,9 +142,59 @@ class PlaybackService : MediaSessionService() {
                     putInt(EXTRA_BITRATE, format.bitrate)
                 })
             }
+
         })
 
-        mediaSession = MediaSession.Builder(this, player).build()
+        mediaSession = MediaSession.Builder(this, player)
+            .setCallback(eqCallback)
+            .build()
+    }
+
+    /**
+     * Grants the UI a single custom command, [CMD_APPLY_EQ], so the equalizer screen can push
+     * live band changes to the DSP. The UI is the source of truth (it persists to [EqSettings]);
+     * this just reapplies what it sends.
+     */
+    private val eqCallback = object : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            val connect = super.onConnect(session, controller)
+            val commands = connect.availableSessionCommands.buildUpon()
+                .add(SessionCommand(CMD_APPLY_EQ, Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.accept(commands, connect.availablePlayerCommands)
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            if (customCommand.customAction == CMD_APPLY_EQ) {
+                eqProcessor.update(
+                    args.getBoolean(EXTRA_EQ_ENABLED, false),
+                    args.getIntArray(EXTRA_EQ_GAINS) ?: IntArray(EqSettings.BAND_COUNT),
+                )
+                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+            return super.onCustomCommand(session, controller, customCommand, args)
+        }
+    }
+
+    /** A [NextRenderersFactory] that splices the equalizer DSP into the audio sink. */
+    private inner class EqRenderersFactory(context: Context) : NextRenderersFactory(context) {
+        override fun buildAudioSink(
+            context: Context,
+            enableFloatOutput: Boolean,
+            enableAudioTrackPlaybackParams: Boolean,
+        ): AudioSink = DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setAudioProcessors(arrayOf(eqProcessor))
+            .build()
     }
 
     /** A hash of the queue's media ids in order — changes only when the items themselves change. */
@@ -237,5 +301,10 @@ class PlaybackService : MediaSessionService() {
         /** Session-extras keys carrying the decoded audio format to the UI. */
         const val EXTRA_SAMPLE_RATE = "tb_sample_rate"
         const val EXTRA_BITRATE = "tb_bitrate"
+
+        /** Custom command: reapply the equalizer. Args carry [EXTRA_EQ_ENABLED] + [EXTRA_EQ_GAINS]. */
+        const val CMD_APPLY_EQ = "com.timbra.EQ_APPLY"
+        const val EXTRA_EQ_ENABLED = "tb_eq_enabled"
+        const val EXTRA_EQ_GAINS = "tb_eq_gains"
     }
 }

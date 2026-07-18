@@ -6,4 +6,8 @@
         android:icon="@drawable/matte_search"
         android:title="@string/menu_search"
         app:showAsAction="never" />
+    <item
+        android:id="@+id/action_equalizer"
+        android:title="@string/menu_equalizer"
+        app:showAsAction="never" />
 </menu>

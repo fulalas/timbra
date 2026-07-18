@@ -64,6 +64,12 @@
     <string name="menu_clear_queue">Clear Queue</string>
     <string name="clear_queue_confirm">Clear the entire queue?</string>
 
+    <!-- Equalizer -->
+    <string name="menu_equalizer">Equalizer</string>
+    <string name="eq_enable">Equalizer</string>
+    <string name="eq_reset">Reset</string>
+    <string name="eq_reset_confirm">Reset all equalizer bands to 0 dB?</string>
+
     <!-- Search -->
     <string name="menu_search">Search</string>
     <string name="search_hint">Search all songs</string>

@@ -54,4 +54,9 @@
         android:id="@+id/searchFragment"
         android:name="com.timbra.ui.search.SearchFragment"
         android:label="@string/menu_search" />
+
+    <fragment
+        android:id="@+id/equalizerFragment"
+        android:name="com.timbra.ui.eq.EqualizerFragment"
+        android:label="@string/menu_equalizer" />
 </navigation>

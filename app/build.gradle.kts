@@ -16,8 +16,8 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library toolbar subtitle) and in the output APK filename.
-        versionCode = 75
-        versionName = "0.6.10"
+        versionCode = 82
+        versionName = "0.7.6"
 
         // Generate R.string.app_name from `appName` so the name isn't duplicated in strings.xml.
         resValue("string", "app_name", appName)

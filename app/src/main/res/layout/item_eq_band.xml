@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One equalizer band column: gain readout (top), vertical fader (fills), frequency (bottom).
+     Inflated 7 times into fragment_equalizer's bands row. The fader is a normal SeekBar rotated
+     -90° at runtime (see EqualizerFragment) — reliable across devices, unlike canvas rotation. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_weight="1"
+    android:orientation="vertical"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:id="@+id/band_gain"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingBottom="6dp"
+        android:textColor="@color/pa_text_secondary"
+        android:textSize="12sp" />
+
+    <com.timbra.ui.eq.VerticalFader
+        android:id="@+id/band_holder"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipChildren="false">
+
+        <SeekBar
+            android:id="@+id/band_seek"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:max="30" />
+    </com.timbra.ui.eq.VerticalFader>
+
+    <TextView
+        android:id="@+id/band_freq"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingTop="6dp"
+        android:textColor="@color/pa_text_tertiary"
+        android:textSize="11sp" />
+</LinearLayout>

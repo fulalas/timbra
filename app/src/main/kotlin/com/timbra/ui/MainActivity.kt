@@ -165,16 +165,29 @@ class MainActivity : AppCompatActivity() {
         navController.navigate(R.id.playerFragment, null, playerNavOptions)
     }
 
-    /** Search is available from every screen's overflow menu (incl. the player). */
+    /** Search + Equalizer are available from every screen's overflow menu (incl. the player). */
     private fun addGlobalMenu() = addMenuProvider(object : MenuProvider {
         override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
             inflater.inflate(R.menu.menu_global, menu)
+        }
+
+        override fun onPrepareMenu(menu: Menu) {
+            // On the equalizer screen the overflow shows only its own Reset action.
+            val onEqScreen = navController.currentDestination?.id == R.id.equalizerFragment
+            menu.findItem(R.id.action_search)?.isVisible = !onEqScreen
+            menu.findItem(R.id.action_equalizer)?.isVisible = !onEqScreen
         }
 
         override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
             R.id.action_search -> {
                 if (navController.currentDestination?.id != R.id.searchFragment) {
                     navController.navigate(R.id.searchFragment, null, navOptions { launchSingleTop = true })
+                }
+                true
+            }
+            R.id.action_equalizer -> {
+                if (navController.currentDestination?.id != R.id.equalizerFragment) {
+                    navController.navigate(R.id.equalizerFragment, null, navOptions { launchSingleTop = true })
                 }
                 true
             }
