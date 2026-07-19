@@ -76,6 +76,9 @@
     <string name="search_hint">Search all songs</string>
     <string name="search_prompt">Type to search all songs</string>
     <string name="search_no_results">No results</string>
+    <string name="search_play_title">Play \"%1$s\"</string>
+    <string name="search_play_all_results">All results</string>
+    <string name="search_play_folder">Its folder</string>
 
     <!-- About -->
     <string name="menu_about">About</string>

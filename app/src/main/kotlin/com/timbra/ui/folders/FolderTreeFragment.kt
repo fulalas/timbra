@@ -16,6 +16,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.timbra.R
 import com.timbra.app
 import com.timbra.data.FolderTreeBuilder
@@ -51,6 +52,11 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
     private lateinit var adapter: LibraryListAdapter
     private var playable: List<Track> = emptyList()
+
+    // On the first load after arriving here (e.g. the player's song-info tap opens the
+    // playing track's folder), center that track in the list. Consumed once, so later
+    // reloads (a rescan) don't yank the user's scroll position around.
+    private var centerOnPlaying = true
 
     private var viewAs: ViewAs = SortDefaults.FOLDER_VIEW
     private var sortOrder: SortOrder = SortDefaults.FOLDER_SONGS
@@ -110,6 +116,37 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             _b ?: return@launch
             adapter.submit(items)
             b.empty.isVisible = items.isEmpty()
+            if (centerOnPlaying) {
+                centerOnPlaying = false
+                centerPlaying(items)
+            }
+        }
+    }
+
+    /**
+     * Scroll so the currently-playing track sits in the middle of the viewport. A no-op when
+     * the track isn't in this list, or when the whole list already fits on screen (nothing to
+     * scroll). Two-step: bring the row into view first, then measure its real height so the
+     * centering offset is exact regardless of row type.
+     */
+    private fun centerPlaying(items: List<ListItem>) {
+        val playingId = player().state.value.mediaId
+        val pos = items.indexOfFirst { it is ListItem.TrackRow && it.track.id == playingId }
+        if (pos < 0) return
+        b.recycler.post {
+            val rv = _b?.recycler ?: return@post
+            val lm = rv.layoutManager as? LinearLayoutManager ?: return@post
+            if (lm.findFirstCompletelyVisibleItemPosition() == 0 &&
+                lm.findLastCompletelyVisibleItemPosition() == items.lastIndex
+            ) return@post // the whole list fits — leave the scroll alone
+            lm.scrollToPosition(pos) // make the target's view exist so it can be measured
+            rv.post {
+                val rv2 = _b?.recycler ?: return@post
+                val rowH = rv2.findViewHolderForAdapterPosition(pos)?.itemView?.height
+                    ?: rv2.getChildAt(0)?.height ?: 0
+                val offset = ((rv2.height - rowH) / 2).coerceAtLeast(0)
+                (rv2.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(pos, offset)
+            }
         }
     }
 

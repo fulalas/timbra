@@ -1,18 +1,21 @@
 package com.timbra.ui.search
 
-import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
+import androidx.appcompat.app.AlertDialog
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.timbra.R
+import com.timbra.data.SortDefaults
 import com.timbra.data.model.Track
+import com.timbra.data.sortedBy
 import com.timbra.databinding.FragmentSearchBinding
 import com.timbra.repository
 import com.timbra.ui.ItemActions
@@ -48,7 +51,7 @@ class SearchFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         adapter = LibraryListAdapter(
             owner = viewLifecycleOwner,
-            onTrack = { index -> player.play(results, index) },
+            onTrack = { index -> promptPlay(index) },
             onFolder = { },
             onNav = { },
             onLongItem = { item ->
@@ -61,9 +64,31 @@ class SearchFragment : Fragment() {
         b.recycler.adapter = adapter
 
         b.searchInput.addTextChangedListener { onQuery(it?.toString().orEmpty()) }
-        b.searchInput.requestFocus()
-        (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(b.searchInput, InputMethodManager.SHOW_IMPLICIT)
+        // Pop the keyboard as soon as Search opens so the user can type straight away.
+        // Both the focus grab and the show must run AFTER the view is attached (post),
+        // not synchronously in onViewCreated — a pre-attach requestFocus() returns false,
+        // leaving nothing focused for the IME to attach to (why it silently failed before).
+        // Pop the keyboard as soon as Search opens. This is opened from the overflow menu,
+        // whose popup holds window focus; when we arrive the activity window may not have it
+        // back yet, and showSoftInput is silently dropped until the window is focused. So show
+        // now if we already have window focus, else wait for it (one-shot).
+        b.searchInput.post {
+            val bb = _b ?: return@post
+            if (bb.searchInput.hasWindowFocus()) {
+                showKeyboard()
+            } else {
+                bb.searchInput.viewTreeObserver.addOnWindowFocusChangeListener(
+                    object : ViewTreeObserver.OnWindowFocusChangeListener {
+                        override fun onWindowFocusChanged(hasFocus: Boolean) {
+                            if (!hasFocus) return
+                            _b?.searchInput?.viewTreeObserver
+                                ?.removeOnWindowFocusChangeListener(this)
+                            showKeyboard()
+                        }
+                    }
+                )
+            }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -96,6 +121,61 @@ class SearchFragment : Fragment() {
             adapter.submit(filtered.mapIndexed { i, t -> ListItem.TrackRow(t, i) })
             if (filtered.isEmpty()) showEmpty(R.string.search_no_results) else b.empty.visibility = View.GONE
         }
+    }
+
+    /**
+     * A tapped search result can start playback two ways, so ask which: play all found
+     * songs (the tapped one first), or play the tapped song and continue through its folder
+     * (Advance-List then flows on into neighbouring folders).
+     */
+    private fun promptPlay(index: Int) {
+        val track = results.getOrNull(index) ?: return
+        AlertDialog.Builder(requireContext())
+            .setTitle(getString(R.string.search_play_title, track.displayTitle))
+            .setItems(
+                arrayOf(
+                    getString(R.string.search_play_all_results),
+                    getString(R.string.search_play_folder),
+                )
+            ) { _, which ->
+                when (which) {
+                    0 -> playAllResults(index)
+                    1 -> playFolder(track)
+                }
+            }
+            .show()
+    }
+
+    /** Play every result, with the tapped song pulled to the front of the queue. */
+    private fun playAllResults(index: Int) {
+        val ordered = ArrayList<Track>(results.size)
+        ordered += results[index]
+        results.forEachIndexed { i, t -> if (i != index) ordered += t }
+        player.play(ordered, 0)
+    }
+
+    /** Play the tapped song within its folder, so playback continues down the folder list. */
+    private fun playFolder(track: Track) {
+        val dir = track.path.substringBeforeLast('/', "")
+        viewLifecycleOwner.lifecycleScope.launch {
+            val node = requireContext().repository.songFolders().firstOrNull { it.path == dir }
+            val folderTracks = node?.tracks?.sortedBy(SortDefaults.FOLDER_SONGS) ?: listOf(track)
+            val start = folderTracks.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+            if (_b == null) return@launch
+            player.play(folderTracks, start, folderContext = node?.path)
+        }
+    }
+
+    /**
+     * Focus the field and force the on-screen keyboard up. Explicit show (flag 0), NOT
+     * SHOW_IMPLICIT: the framework drops an implicit request when it thinks a hardware
+     * keyboard is present (e.g. a GSI's virtual input device), so the keyboard never appears.
+     */
+    private fun showKeyboard() {
+        val et = _b?.searchInput ?: return
+        et.requestFocus()
+        requireContext().getSystemService(InputMethodManager::class.java)
+            ?.showSoftInput(et, 0)
     }
 
     private fun showEmpty(textRes: Int) {
