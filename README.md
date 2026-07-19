@@ -22,10 +22,7 @@ that look and feel as original code on a modern stack.
 - **7-band equalizer** — a custom Media3 DSP processor independent of the device's framework
   audio effects.
 - **Shuffle** — off · shuffle current list · shuffle all songs.
-- **Repeat** — off · repeat list · **advance list** · repeat song.
-- **Advance-List folder navigation** — at a folder boundary, playback (and swipe/next/prev)
-  flows straight into the previous/next folder, with a preview card for the neighbouring
-  folder's cover.
+- **Repeat** — off · repeat list · advance list · repeat song.
 - **Search** across the library.
 - **Matte-dark theme** — reuses the classic `matte_*` skin assets, pure-black window for OLED.
 - **No ads, no telemetry, no bullshit**.
