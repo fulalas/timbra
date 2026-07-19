@@ -43,6 +43,12 @@ class SearchFragment : Fragment() {
     private var results: List<Track> = emptyList()
     private var searchJob: Job? = null
 
+    // One-shot listener that waits for window focus before showing the keyboard; tracked
+    // (with the exact observer it was added to) so it can be removed even if the view is
+    // destroyed before it ever fires — otherwise it leaks the fragment on the window observer.
+    private var imeFocusObserver: ViewTreeObserver? = null
+    private var imeFocusListener: ViewTreeObserver.OnWindowFocusChangeListener? = null
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
         _b = FragmentSearchBinding.inflate(inflater, container, false)
         return b.root
@@ -64,29 +70,25 @@ class SearchFragment : Fragment() {
         b.recycler.adapter = adapter
 
         b.searchInput.addTextChangedListener { onQuery(it?.toString().orEmpty()) }
-        // Pop the keyboard as soon as Search opens so the user can type straight away.
-        // Both the focus grab and the show must run AFTER the view is attached (post),
-        // not synchronously in onViewCreated — a pre-attach requestFocus() returns false,
-        // leaving nothing focused for the IME to attach to (why it silently failed before).
-        // Pop the keyboard as soon as Search opens. This is opened from the overflow menu,
-        // whose popup holds window focus; when we arrive the activity window may not have it
-        // back yet, and showSoftInput is silently dropped until the window is focused. So show
-        // now if we already have window focus, else wait for it (one-shot).
+        // Pop the keyboard as soon as Search opens so the user can type straight away. Posted so
+        // it runs after the view is attached. Search is reached from the overflow menu, whose
+        // popup holds window focus; until the activity window gets it back, showSoftInput is
+        // silently dropped — so show now if we already have window focus, else wait for it.
         b.searchInput.post {
             val bb = _b ?: return@post
             if (bb.searchInput.hasWindowFocus()) {
                 showKeyboard()
             } else {
-                bb.searchInput.viewTreeObserver.addOnWindowFocusChangeListener(
-                    object : ViewTreeObserver.OnWindowFocusChangeListener {
-                        override fun onWindowFocusChanged(hasFocus: Boolean) {
-                            if (!hasFocus) return
-                            _b?.searchInput?.viewTreeObserver
-                                ?.removeOnWindowFocusChangeListener(this)
-                            showKeyboard()
-                        }
+                val listener = object : ViewTreeObserver.OnWindowFocusChangeListener {
+                    override fun onWindowFocusChanged(hasFocus: Boolean) {
+                        if (!hasFocus) return
+                        removeImeFocusListener()
+                        showKeyboard()
                     }
-                )
+                }
+                imeFocusListener = listener
+                imeFocusObserver = bb.searchInput.viewTreeObserver
+                    .also { it.addOnWindowFocusChangeListener(listener) }
             }
         }
 
@@ -129,7 +131,10 @@ class SearchFragment : Fragment() {
      * (Advance-List then flows on into neighbouring folders).
      */
     private fun promptPlay(index: Int) {
-        val track = results.getOrNull(index) ?: return
+        // Snapshot the tapped list: a debounced search can replace `results` while this dialog
+        // is open, so both actions must act on what the user actually tapped, not the live list.
+        val snapshot = results
+        val track = snapshot.getOrNull(index) ?: return
         AlertDialog.Builder(requireContext())
             .setTitle(getString(R.string.search_play_title, track.displayTitle))
             .setItems(
@@ -139,18 +144,18 @@ class SearchFragment : Fragment() {
                 )
             ) { _, which ->
                 when (which) {
-                    0 -> playAllResults(index)
+                    0 -> playAllResults(snapshot, index)
                     1 -> playFolder(track)
                 }
             }
             .show()
     }
 
-    /** Play every result, with the tapped song pulled to the front of the queue. */
-    private fun playAllResults(index: Int) {
-        val ordered = ArrayList<Track>(results.size)
-        ordered += results[index]
-        results.forEachIndexed { i, t -> if (i != index) ordered += t }
+    /** Play every result in [tracks], with the tapped song (at [index]) pulled to the front. */
+    private fun playAllResults(tracks: List<Track>, index: Int) {
+        val ordered = ArrayList<Track>(tracks.size)
+        ordered += tracks[index]
+        tracks.forEachIndexed { i, t -> if (i != index) ordered += t }
         player.play(ordered, 0)
     }
 
@@ -158,11 +163,16 @@ class SearchFragment : Fragment() {
     private fun playFolder(track: Track) {
         val dir = track.path.substringBeforeLast('/', "")
         viewLifecycleOwner.lifecycleScope.launch {
-            val node = requireContext().repository.songFolders().firstOrNull { it.path == dir }
-            val folderTracks = node?.tracks?.sortedBy(SortDefaults.FOLDER_SONGS) ?: listOf(track)
+            val repo = requireContext().repository
+            val node = repo.songFolders().firstOrNull { it.path == dir }
+            // If the folder node isn't found, rebuild it by directory from all tracks rather than
+            // silently degrading to a one-song queue — "Its folder" should queue the whole folder.
+            val folderTracks = (node?.tracks
+                ?: repo.allTracks().filter { it.path.substringBeforeLast('/', "") == dir })
+                .sortedBy(SortDefaults.FOLDER_SONGS)
             val start = folderTracks.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
             if (_b == null) return@launch
-            player.play(folderTracks, start, folderContext = node?.path)
+            player.play(folderTracks, start, folderContext = dir)
         }
     }
 
@@ -178,6 +188,14 @@ class SearchFragment : Fragment() {
             ?.showSoftInput(et, 0)
     }
 
+    /** Detach the pending window-focus listener from the exact observer it was added to. */
+    private fun removeImeFocusListener() {
+        val listener = imeFocusListener ?: return
+        imeFocusObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener)
+        imeFocusListener = null
+        imeFocusObserver = null
+    }
+
     private fun showEmpty(textRes: Int) {
         b.empty.setText(textRes)
         b.empty.visibility = View.VISIBLE
@@ -185,6 +203,7 @@ class SearchFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        removeImeFocusListener()
         _b = null
     }
 }
