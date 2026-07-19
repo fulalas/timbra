@@ -30,7 +30,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     /** Per-band normalized coeffs [b0, b1, b2, a1, a2]; rebuilt when gains/format change. */
     @Volatile private var coeffs: Array<DoubleArray> = identityCoeffs()
 
-    private var sampleRate = 0
+    @Volatile private var sampleRate = 0
     private var channels = 0
     /** Per-channel, per-band filter memory: [channel][band*4 + (x1,x2,y1,y2)]. */
     private var state: Array<DoubleArray> = emptyArray()
@@ -106,17 +106,25 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         fun buildCoeffs(gainsDb: IntArray, sampleRate: Int): Array<DoubleArray> =
             Array(EqSettings.BAND_COUNT) { band ->
                 val gain = gainsDb.getOrElse(band) { 0 }
-                val a = 10.0.pow(gain / 40.0)
-                val w0 = 2.0 * PI * EqSettings.BAND_FREQS[band] / sampleRate
-                val cosW0 = cos(w0)
-                val alpha = sin(w0) / (2.0 * Q)
-                val b0 = 1 + alpha * a
-                val b1 = -2 * cosW0
-                val b2 = 1 - alpha * a
-                val a0 = 1 + alpha / a
-                val a1 = -2 * cosW0
-                val a2 = 1 - alpha / a
-                doubleArrayOf(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+                val f0 = EqSettings.BAND_FREQS[band]
+                // Skip (pass through) bands at/above Nyquist: the RBJ formula is only valid for
+                // 0 < w0 < π; at or beyond it the poles leave the unit circle and the filter
+                // self-oscillates. Also short-circuit 0 dB (an exact passthrough).
+                if (gain == 0 || f0 * 2 >= sampleRate) {
+                    doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0)
+                } else {
+                    val a = 10.0.pow(gain / 40.0)
+                    val w0 = 2.0 * PI * f0 / sampleRate
+                    val cosW0 = cos(w0)
+                    val alpha = sin(w0) / (2.0 * Q)
+                    val b0 = 1 + alpha * a
+                    val b1 = -2 * cosW0
+                    val b2 = 1 - alpha * a
+                    val a0 = 1 + alpha / a
+                    val a1 = -2 * cosW0
+                    val a2 = 1 - alpha / a
+                    doubleArrayOf(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+                }
             }
     }
 }

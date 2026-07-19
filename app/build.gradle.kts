@@ -16,19 +16,21 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library toolbar subtitle) and in the output APK filename.
-        versionCode = 82
-        versionName = "0.7.6"
+        versionCode = 86
+        versionName = "0.7.10"
 
         // Generate R.string.app_name from `appName` so the name isn't duplicated in strings.xml.
         resValue("string", "app_name", appName)
     }
 
     signingConfigs {
-        getByName("debug") {
-            storeFile = file("key.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        create("release") {
+            // Release key committed to the repo (credentials are intentionally public) so the
+            // APK has a stable signing identity and installs/updates over adb without setup.
+            storeFile = file("timbra.keystore")
+            storePassword = "timbra"
+            keyAlias = "timbra"
+            keyPassword = "timbra"
         }
     }
 
@@ -37,8 +39,7 @@ android {
             // Strip unused code + resources (e.g. the many unused matte_* assets).
             isMinifyEnabled = true
             isShrinkResources = true
-            // Debug key so the release APK installs directly via adb (no keystore setup).
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

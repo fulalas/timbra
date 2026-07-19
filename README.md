@@ -19,6 +19,8 @@ that look and feel as original code on a modern stack.
   / notification controls and Bluetooth media keys.
 - **Swipeable album-art deck** — swipe the cover art: left/right to change song,
   up/down to jump to the next/previous folder.
+- **7-band equalizer** — a custom Media3 DSP processor independent of the device's framework
+  audio effects.
 - **Shuffle** — off · shuffle current list · shuffle all songs.
 - **Repeat** — off · repeat list · **advance list** · repeat song.
 - **Advance-List folder navigation** — at a folder boundary, playback (and swipe/next/prev)
@@ -64,8 +66,9 @@ provision. Provisioning is guarded per component, so a partial toolchain heals i
 re-runs are fast no-ops. Self-provisioning downloads Linux x86_64 binaries and needs
 `curl`, `unzip` and `tar`; on other hosts supply a toolchain via `TIMBRA_ENV`.
 
-The release variant is minified (R8) and signed with the debug key so it installs
-directly over adb without keystore setup.
+The release variant is minified (R8) and signed with the bundled `timbra.keystore` so the
+APK has a stable signing identity and installs/updates directly over adb without any
+keystore setup.
 
 ## Installing on a device
 
@@ -99,8 +102,7 @@ app/src/main/kotlin/com/timbra/
 
 ## Roadmap
 
-Not yet implemented: settings screen, equalizer / tone controls, home-screen widgets,
-lyrics, theme switching.
+Not yet implemented: lyrics, theme switching.
 
 ## License
 

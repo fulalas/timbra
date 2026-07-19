@@ -22,9 +22,8 @@ import com.timbra.ui.MainActivity
 
 /**
  * The 7-band graphic equalizer, opened from the global 3-dot menu. Reads/writes the persisted
- * [EqSettings] and pushes every change to the live service-side effect via
- * [com.timbra.player.PlayerConnection.applyEq]. Available only on API 28+ (the menu item is
- * hidden below that). Its own overflow offers a single action, Reset.
+ * [EqSettings] and pushes every change to the live DSP via
+ * [com.timbra.player.PlayerConnection.applyEq]. Its own overflow offers a single action, Reset.
  */
 class EqualizerFragment : Fragment(), MenuProvider {
 
@@ -85,12 +84,18 @@ class EqualizerFragment : Fragment(), MenuProvider {
         }
 
         b.eqEnable.isChecked = settings.enabled
+        setEnableLabel(settings.enabled)
         setBandsEnabled(settings.enabled)
         b.eqEnable.setOnCheckedChangeListener { _, checked ->
             settings.enabled = checked
+            setEnableLabel(checked)
             setBandsEnabled(checked)
             applyLive()
         }
+    }
+
+    private fun setEnableLabel(enabled: Boolean) {
+        b.eqEnableLabel.setText(if (enabled) R.string.eq_on else R.string.eq_off)
     }
 
     // --- Overflow menu: only Reset ---
@@ -127,6 +132,9 @@ class EqualizerFragment : Fragment(), MenuProvider {
     private fun setBandsEnabled(enabled: Boolean) {
         b.bands.alpha = if (enabled) 1f else 0.4f
         faders.forEach { it?.isEnabled = enabled }
+        // Also disable the underlying SeekBars: when a fader stops intercepting (disabled), the
+        // still-enabled child SeekBar would otherwise keep receiving touches on its thumb strip.
+        seeks.forEach { it?.isEnabled = enabled }
     }
 
     /** "0", "+3", "-5" (dB). */

@@ -6,13 +6,25 @@
     android:background="@color/pa_window"
     android:padding="20dp">
 
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/eq_enable"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/eq_enable"
-        android:textColor="@color/pa_text_primary"
-        android:textSize="16sp" />
+        android:orientation="horizontal"
+        android:gravity="end|center_vertical">
+
+        <TextView
+            android:id="@+id/eq_enable_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:textColor="@color/pa_text_primary"
+            android:textSize="16sp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/eq_enable"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/bands"

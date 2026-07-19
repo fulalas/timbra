@@ -5,8 +5,8 @@ import android.content.Context
 /**
  * Persists the 7-band equalizer state (on/off + per-band gains) to SharedPreferences so it
  * survives app restarts. Same idiom as [PlaybackStateStore]: its own private file, gains
- * stored as a comma-joined string. The service reapplies these on cold start (see
- * [EqController]); the equalizer screen reads/writes them live.
+ * stored as a comma-joined string. The service reapplies these to the DSP on cold start (see
+ * [EqualizerAudioProcessor]); the equalizer screen reads/writes them live.
  */
 class EqSettings(context: Context) {
 

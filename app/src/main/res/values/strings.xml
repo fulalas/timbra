@@ -66,7 +66,8 @@
 
     <!-- Equalizer -->
     <string name="menu_equalizer">Equalizer</string>
-    <string name="eq_enable">Equalizer</string>
+    <string name="eq_on">On</string>
+    <string name="eq_off">Off</string>
     <string name="eq_reset">Reset</string>
     <string name="eq_reset_confirm">Reset all equalizer bands to 0 dB?</string>
 
