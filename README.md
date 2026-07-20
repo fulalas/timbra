@@ -82,20 +82,7 @@ adb install -r timbra-<version>.apk
 adb shell am start -n com.timbra/.ui.MainActivity
 ```
 
-Grant the photos and media permission on first launch.
-
-## Project structure
-
-```
-app/src/main/kotlin/com/timbra/
-├── player/   PlaybackService (MediaSessionService + ExoPlayer/FFmpeg),
-│             PlayerConnection (MediaController wrapper + UiPlayback state), PlayModes
-├── data/     MediaRepository (MediaStore), FolderTreeBuilder (virtual folder tree),
-│             Sorting / SortDefaults, data models
-└── ui/       MainActivity (toolbar + nav host + mini-player), library/, folders/,
-              list/ (shared LibraryListAdapter), player/, queue/, search/, dialogs/,
-              ArtLoader, Format
-```
+Grant media permission on first launch.
 
 ## Roadmap
 
