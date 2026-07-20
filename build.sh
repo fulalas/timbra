@@ -2,7 +2,9 @@
 # Build Timbra (pure Kotlin/Android; no NDK/Go/Rust — the FFmpeg decoders ship prebuilt
 # inside the nextlib AAR). Provisions its own toolchain when none is available.
 #
-# Usage: ./build.sh [gradle-task]   (default: assembleRelease)
+# Usage: ./build.sh [gradle-task] [--no-install]   (default task: assembleRelease)
+#   When a device is connected (adb, in "device" state), the built APK is installed
+#   automatically afterwards (in-place update via ./install.sh); --no-install skips it.
 #
 # Toolchain resolution, in order:
 #   1. $TIMBRA_ENV pointing at an env script to source
@@ -19,6 +21,18 @@ set -eo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLCHAIN="${TOOLCHAIN_DIR:-$DIR/toolchain}"
 
+# Args: an optional gradle task (positional) plus flags. Keeps `./build.sh
+# assembleDebug` working while adding --no-install.
+TASK=""
+INSTALL=1
+for arg in "$@"; do
+    case "$arg" in
+        --no-install) INSTALL=0 ;;
+        --*) echo "unknown flag: $arg" >&2; exit 1 ;;
+        *) TASK="$arg" ;;
+    esac
+done
+
 JDK_FEATURE="${JDK_FEATURE:-17}"
 GRADLE_VERSION="${GRADLE_VERSION:-8.13}"
 CMDLINE_BUILD="${CMDLINE_BUILD:-11076708}"
@@ -33,6 +47,15 @@ CMDLINE_URL="https://dl.google.com/android/repository/commandlinetools-linux-${C
 
 log() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Resolves adb (prefer the toolchain copy) and reports whether at least one
+# device is connected and ready ("device" state — not unauthorized/offline).
+adb_device_ready() {
+    local adb="${ANDROID_HOME:+$ANDROID_HOME/platform-tools/adb}"
+    [ -x "$adb" ] || adb="$(command -v adb 2>/dev/null || true)"
+    [ -n "$adb" ] || return 1
+    "$adb" devices 2>/dev/null | awk 'NR>1 && $2=="device"{f=1} END{exit !f}'
+}
 
 have_build_env() {
     command -v java >/dev/null 2>&1 && command -v gradle >/dev/null 2>&1 \
@@ -123,7 +146,7 @@ fi
 NAME=$(sed -n 's/^appName=//p' "$DIR/gradle.properties" | tr -d '\r')
 NAME_LC=$(echo "${NAME:-app}" | tr '[:upper:]' '[:lower:]')
 
-TASK="${1:-assembleRelease}"
+TASK="${TASK:-assembleRelease}"
 log "Building $NAME ($TASK)"
 cd "$DIR"
 "$GRADLE" "$TASK" --no-daemon
@@ -145,5 +168,10 @@ if [ -n "$BUILT" ]; then
     echo
     log "APK output"
     ls -lh "$OUT"
-    echo "Install with: adb install -r $OUT   (or ./install.sh; --clean for a fresh install)"
+    if [ "$INSTALL" = 1 ] && adb_device_ready; then
+        log "Device detected — installing (in-place update)"
+        "$DIR/install.sh"
+    else
+        echo "Install with: adb install -r $OUT   (or ./install.sh; --clean for a fresh install)"
+    fi
 fi

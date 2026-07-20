@@ -23,7 +23,10 @@ Single source of truth: `app/build.gradle.kts` → `defaultConfig`.
 ```bash
 ./build.sh                 # assembleRelease (default)
 ./build.sh assembleDebug   # debug variant
+./build.sh --no-install    # build but don't touch the device
 ```
+When a device is connected (adb, `device` state), `build.sh` installs the APK
+automatically after building (in-place update via `./install.sh`); `--no-install` skips it.
 `build.sh` is self-sufficient: toolchain resolution is `$TIMBRA_ENV` → `./toolchain/env.sh`
 → `../toolchain/env.sh` (shared sibling — the local dev setup) → PATH → **self-provision**
 into `./toolchain/` (downloads JDK 17, Gradle 8.13, cmdline-tools, SDK platform/build-tools
