@@ -190,6 +190,7 @@ class PlayerConnection(private val context: Context) {
             handler.removeCallbacks(ticker)
             handler.post(ticker)
             rebuildQueue()
+            restoreModesForLiveSession()
             onReady()
         }, MoreExecutors.directExecutor())
     }
@@ -262,6 +263,31 @@ class PlayerConnection(private val context: Context) {
         c.shuffleModeEnabled = appShuffle.playerShuffleEnabled
         c.repeatMode = appRepeat.playerMode
         c.prepare()
+    }
+
+    /**
+     * Re-hydrate the app-level shuffle/repeat modes from disk onto a session whose queue is
+     * still live (the [PlaybackService] outlived the Activity — a config change, or the system
+     * reclaiming the Activity but keeping the process). [restore] covers only the cold-start
+     * path (empty queue); without this, reconnecting to a surviving queue rebuilds a fresh
+     * [PlayerConnection] with the DEFAULT modes and never reads the saved ones. The player's own
+     * repeatMode can't recover it — Advance-List maps to REPEAT_MODE_OFF, indistinguishable from
+     * true OFF — so Advance-List would silently stop advancing to the next folder (appRepeat back
+     * to OFF) until the user re-selects the mode. No-op on an empty queue (restore handles that).
+     */
+    private fun restoreModesForLiveSession() {
+        val c = controller ?: return
+        if (c.mediaItemCount == 0) return
+        val saved = store.load() ?: return
+        appShuffle = ShuffleMode.entries.getOrElse(saved.shuffleOrdinal) { ShuffleMode.OFF }
+        appRepeat = RepeatMode.entries.getOrElse(saved.repeatOrdinal) { RepeatMode.OFF }
+        c.repeatMode = appRepeat.playerMode
+        // The live player already carries the real shuffle order; only align the flag if it
+        // drifted, so we don't trigger a needless shuffle-session reset (see PlaybackService).
+        if (c.shuffleModeEnabled != appShuffle.playerShuffleEnabled) {
+            c.shuffleModeEnabled = appShuffle.playerShuffleEnabled
+        }
+        pushState()
     }
 
     /** Remove every manually-enqueued item from the timeline (Clear Queue). */
