@@ -69,22 +69,17 @@ re-runs are fast no-ops. Self-provisioning downloads Linux x86_64 binaries and n
 The release variant is minified (R8) and signed with the bundled `timbra.keystore` so the
 APK has a stable signing identity and installs/updates smoothly.
 
-## Installing on a device
+After building, the installation is performed automatically if an Android device is
+connected. By default, the installation **updates the app in place** (`adb install -r`)
+using the most recently built APK, so app data is preserved.
+
+It's also possible to run just the `install.sh` script:
 
 ```bash
 ./install.sh
 ```
 
-`install.sh` **updates in place** (`adb install -r`) with the most recently built APK, so
-app data survives; pass `--clean` for a fresh install (uninstall + install). It finds
-`adb` through the same toolchain resolution as `build.sh`. To install manually:
-
-```bash
-adb install -r timbra-<version>.apk
-adb shell am start -n com.timbra/.ui.MainActivity
-```
-
-Grant media permission on first launch.
+Pass `--clean` for a fresh install (uninstall + install).
 
 ## Roadmap
 
