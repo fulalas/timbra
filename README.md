@@ -12,22 +12,22 @@ that look and feel as original code on a modern stack.
 
 ## Features
 
-- **Folder-first browsing** — a virtual folder tree built from file paths, so it works
-  without the all-files-access permission.
+- **Folder-first browsing** — a virtual folder tree built from file paths.
 - **Full library** — Folders, Albums, Artists, All Songs, Genres, Playlists, and the play
   Queue.
-- **Wide format support** — FFmpeg-backed decoders (via Media3 + nextlib) play far more
-  than the platform codecs, on all shipped ABIs including `arm64-v8a`.
-- **Gapless & background playback** — a `MediaSessionService` keeps playing with lock-screen
-  / notification controls and Bluetooth media keys.
-- **Swipeable album-art deck** — swipe the cover art: left/right to change song,
+- **Wide format support** — FFmpeg-backed decoders play far more formats than Android's
+  native codecs.
+- **Gapless & background playback** — keeps playing with lock-screen, notification, and
+  Bluetooth controls, including gestures.
+- **Gesture-based album-art navigation** — swipe the album art: left/right to change song,
   up/down to jump to the next/previous folder.
-- **7-band equalizer** — a custom Media3 DSP processor independent of the device's framework
-  audio effects.
+- **7-band equalizer** — a custom DSP processor independent of the device's installed audio
+  effects.
 - **Shuffle** — off · shuffle current list · shuffle all songs.
 - **Repeat** — off · repeat list · advance list · repeat song.
 - **Search** across the library.
-- **Matte-dark theme** — reuses the classic `matte_*` skin assets, pure-black window for OLED.
+- **Dark theme** — reuses the classic matte skin visuals, with a pure-black window optimized
+  for OLED screens.
 - **No ads, no telemetry, no bullshit**.
 
 ## Requirements
