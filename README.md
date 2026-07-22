@@ -67,8 +67,7 @@ re-runs are fast no-ops. Self-provisioning downloads Linux x86_64 binaries and n
 `curl`, `unzip` and `tar`; on other hosts supply a toolchain via `TIMBRA_ENV`.
 
 The release variant is minified (R8) and signed with the bundled `timbra.keystore` so the
-APK has a stable signing identity and installs/updates directly over adb without any
-keystore setup.
+APK has a stable signing identity and installs/updates smoothly.
 
 ## Installing on a device
 
