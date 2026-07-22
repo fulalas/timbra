@@ -55,6 +55,14 @@ class PlaybackStateStore(context: Context) {
         )
     }
 
+    /**
+     * The persisted play modes (shuffle, repeat) as ordinals — read independently of the saved
+     * queue, so a live-session reconnect can re-adopt them even when the queue itself isn't
+     * (re)loaded from disk. Defaults to OFF (ordinal 0) for both.
+     */
+    fun loadModes(): Pair<Int, Int> =
+        prefs.getInt(KEY_SHUFFLE, 0) to prefs.getInt(KEY_REPEAT, 0)
+
     private companion object {
         const val KEY_IDS = "queue_ids"
         const val KEY_ENQ = "enqueued_indices"

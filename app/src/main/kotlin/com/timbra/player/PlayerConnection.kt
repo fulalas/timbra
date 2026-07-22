@@ -184,13 +184,15 @@ class PlayerConnection(private val context: Context) {
             controller = runCatching { future.get() }.getOrNull()?.also { it.addListener(listener) }
                 ?: return@addListener
             readAudioFormat(controller!!.sessionExtras)
-            pushState()
             // A fresh controller doesn't replay events, so if a song is already playing the
             // listener won't fire to start the ticker — kick it here (it self-stops when paused).
             handler.removeCallbacks(ticker)
             handler.post(ticker)
             rebuildQueue()
+            // Re-adopt persisted modes onto a surviving queue BEFORE the first state push, so the
+            // repeat/shuffle icons don't flash their defaults for a frame.
             restoreModesForLiveSession()
+            pushState()
             onReady()
         }, MoreExecutors.directExecutor())
     }
@@ -233,6 +235,23 @@ class PlayerConnection(private val context: Context) {
     }
 
     /**
+     * Adopt persisted [shuffleOrdinal]/[repeatOrdinal] play modes into the in-memory fields and
+     * mirror them onto the player. [forceShuffleOrder] = true (cold [restore], fresh queue)
+     * always writes shuffleModeEnabled so the new timeline gets a shuffle order; false (live
+     * reconnect) writes it only when it actually drifted, so an already-shuffled session isn't
+     * needlessly reshuffled (see PlaybackService.onShuffleModeEnabledChanged / onTimelineChanged).
+     */
+    private fun applyModes(shuffleOrdinal: Int, repeatOrdinal: Int, forceShuffleOrder: Boolean) {
+        val c = controller ?: return
+        appShuffle = ShuffleMode.entries.getOrElse(shuffleOrdinal) { ShuffleMode.OFF }
+        appRepeat = RepeatMode.entries.getOrElse(repeatOrdinal) { RepeatMode.OFF }
+        c.repeatMode = appRepeat.playerMode
+        if (forceShuffleOrder || c.shuffleModeEnabled != appShuffle.playerShuffleEnabled) {
+            c.shuffleModeEnabled = appShuffle.playerShuffleEnabled
+        }
+    }
+
+    /**
      * Restore a saved queue paused at [positionMs]; the user presses play to resume.
      * [enqueuedFlags] is aligned with [tracks] and marks which items were in the queue.
      */
@@ -246,8 +265,6 @@ class PlayerConnection(private val context: Context) {
     ) {
         val c = controller ?: return
         queueGeneration++
-        appShuffle = ShuffleMode.entries.getOrElse(shuffleOrdinal) { ShuffleMode.OFF }
-        appRepeat = RepeatMode.entries.getOrElse(repeatOrdinal) { RepeatMode.OFF }
         c.setMediaItems(
             tracks.mapIndexed { i, t -> t.toMediaItem(enqueued = enqueuedFlags.getOrElse(i) { false }) },
             index.coerceIn(0, maxOf(0, tracks.size - 1)),
@@ -255,39 +272,37 @@ class PlayerConnection(private val context: Context) {
         )
         // Keep FIFO append working after restore: further enqueues go after the last one.
         enqueueEnd = enqueuedFlags.indexOfLast { it }
+        applyModes(shuffleOrdinal, repeatOrdinal, forceShuffleOrder = true)
         // If shuffle is being restored as ON, anchor the snapshot on the restored queue so a
         // later shuffle-off keeps this queue (the original pre-shuffle one wasn't persisted).
         preShuffle = if (appShuffle != ShuffleMode.OFF) {
             PreShuffle(tracks.map { it.id }, index.coerceIn(0, maxOf(0, tracks.size - 1)), positionMs)
         } else null
-        c.shuffleModeEnabled = appShuffle.playerShuffleEnabled
-        c.repeatMode = appRepeat.playerMode
         c.prepare()
     }
 
     /**
-     * Re-hydrate the app-level shuffle/repeat modes from disk onto a session whose queue is
-     * still live (the [PlaybackService] outlived the Activity — a config change, or the system
-     * reclaiming the Activity but keeping the process). [restore] covers only the cold-start
-     * path (empty queue); without this, reconnecting to a surviving queue rebuilds a fresh
-     * [PlayerConnection] with the DEFAULT modes and never reads the saved ones. The player's own
-     * repeatMode can't recover it — Advance-List maps to REPEAT_MODE_OFF, indistinguishable from
-     * true OFF — so Advance-List would silently stop advancing to the next folder (appRepeat back
-     * to OFF) until the user re-selects the mode. No-op on an empty queue (restore handles that).
+     * Re-hydrate the app-level shuffle/repeat modes onto a session whose queue is still live
+     * (the [PlaybackService] outlived the Activity — a config change, or the system reclaiming
+     * the Activity but keeping the process). [restore] only covers the cold-start path (empty
+     * queue); without this a reconnect to a surviving queue rebuilds a fresh [PlayerConnection]
+     * with the DEFAULT modes and never reads the saved ones. The player's own repeatMode can't
+     * recover it — Advance-List maps to REPEAT_MODE_OFF, indistinguishable from true OFF — so
+     * Advance-List would silently stop advancing to the next folder until the user re-selects the
+     * mode. Modes are read independently of the saved queue ([PlaybackStateStore.loadModes], they
+     * outlive it), and only a FRESH connection adopts them: a retained [PlayerConnection] already
+     * holds the authoritative in-memory modes (every setter persists them), so re-reading disk
+     * there could clobber live state. No-op on an empty queue (restore handles that).
      */
     private fun restoreModesForLiveSession() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) return
-        val saved = store.load() ?: return
-        appShuffle = ShuffleMode.entries.getOrElse(saved.shuffleOrdinal) { ShuffleMode.OFF }
-        appRepeat = RepeatMode.entries.getOrElse(saved.repeatOrdinal) { RepeatMode.OFF }
-        c.repeatMode = appRepeat.playerMode
-        // The live player already carries the real shuffle order; only align the flag if it
-        // drifted, so we don't trigger a needless shuffle-session reset (see PlaybackService).
-        if (c.shuffleModeEnabled != appShuffle.playerShuffleEnabled) {
-            c.shuffleModeEnabled = appShuffle.playerShuffleEnabled
-        }
-        pushState()
+        if (appShuffle != ShuffleMode.OFF || appRepeat != RepeatMode.OFF) return
+        val (shuffleOrdinal, repeatOrdinal) = store.loadModes()
+        applyModes(shuffleOrdinal, repeatOrdinal, forceShuffleOrder = false)
+        // Seed the shuffle-off snapshot from the live queue (the original pre-shuffle order
+        // wasn't persisted), mirroring restore(), so a later shuffle-off can rebuild it.
+        if (appShuffle != ShuffleMode.OFF) takeShuffleSnapshot() else preShuffle = null
     }
 
     /** Remove every manually-enqueued item from the timeline (Clear Queue). */
