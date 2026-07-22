@@ -19,6 +19,17 @@ class TimbraApp : Application() {
     /** True once the full player has been auto-opened this process launch. */
     var openedPlayerThisLaunch = false
 
+    /**
+     * True while the UI's [com.timbra.player.PlayerConnection] has a live controller (set on
+     * connect, cleared on release). [com.timbra.player.PlaybackService] uses it to decide who
+     * owns the automatic Advance-List folder advance at the end of a queue: the UI when it's
+     * attached (rich deck/phantom/folderContext handling), the service when it isn't (the app
+     * is backgrounded / the Activity was destroyed) — so the last song of a folder still rolls
+     * into the next one with the screen off, and the two never double-advance.
+     */
+    @Volatile
+    var uiControllerAttached = false
+
     fun refreshLibrary() {
         repository.invalidate()
         ArtLoader.invalidate()

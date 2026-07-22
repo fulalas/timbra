@@ -65,6 +65,14 @@ class PlayerFragment : Fragment() {
     /** False until the pager has been aligned once; the first alignment snaps (no animation). */
     private var pagerSynced = false
 
+    /**
+     * The [UiPlayback.liveTransitionSeq] value last handled. The card flip animates only when the
+     * sequence has advanced since the previous bind — i.e. ExoPlayer reported a genuine live
+     * AUTO/SEEK song transition. A song that changed while we were backgrounded arrives via a
+     * reconnect state-sync (which doesn't advance the sequence), so it snaps into place instead.
+     */
+    private var lastLiveSeq = 0
+
     /** True only when the pager is at rest, so ticks don't yank it mid-swipe. */
     private var pagerIdle = true
 
@@ -747,6 +755,11 @@ class PlayerFragment : Fragment() {
         // This runs BEFORE updatePhantom so the shuffle deck can flip onto the OLD edge card.
         if (s.mediaId != lastBoundMediaId) {
             lastBoundMediaId = s.mediaId
+            // Animate the flip only for a LIVE transition — one ExoPlayer reported (AUTO end /
+            // SEEK next-prev-tap) while we were connected, which advances liveTransitionSeq. A song
+            // that changed while backgrounded arrives via a reconnect state-sync that does NOT
+            // advance the sequence, so it snaps into place instead of spuriously flipping.
+            val animate = pagerSynced && s.liveTransitionSeq != lastLiveSeq
             if (s.shuffle != ShuffleMode.OFF) {
                 // Button-press transitions (pager at rest): flip onto the edge card that
                 // previews this song; the deferred rebuild then re-centers invisibly on the
@@ -759,15 +772,15 @@ class PlayerFragment : Fragment() {
                         else -> -1
                     }
                     if (target in 0 until artAdapter.itemCount && b.artPager.currentItem != target) {
-                        b.artPager.setCurrentItem(target, pagerSynced)
+                        b.artPager.setCurrentItem(target, animate)
                         // The SETTLING event may arrive after updatePhantom below would run —
                         // mark the pager busy NOW so the deck rebuild defers to the settle.
-                        if (pagerSynced) pagerIdle = false
+                        if (animate) pagerIdle = false
                     }
                     pagerSynced = true
                 }
             } else {
-                syncPager(s.queueIndex)
+                syncPager(s.queueIndex, animate = animate)
             }
         }
         updatePhantom(s)
@@ -794,6 +807,10 @@ class PlayerFragment : Fragment() {
             b.seek.progress = s.positionMs.toInt().coerceIn(0, b.seek.max)
             b.position.text = Format.clock(s.positionMs)
         }
+
+        // Track the live-transition sequence so the NEXT bind can tell a genuine transition
+        // (sequence advanced) from a re-sync of the same state (sequence unchanged).
+        lastLiveSeq = s.liveTransitionSeq
     }
 
     override fun onDestroyView() {

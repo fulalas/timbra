@@ -82,4 +82,23 @@ object FolderTreeBuilder {
         walk(root)
         return out
     }
+
+    /**
+     * The (previous, next) song-folders around the first of [anchorPaths] that resolves to an
+     * entry in the flat traversal [folders]; nulls at the edges or when none resolves. [anchorPaths]
+     * is tried in priority order (e.g. the UI passes its folderContext then the playing file's
+     * directory; the service passes just that directory) — the single source of truth for
+     * Advance-List folder stepping, shared by [com.timbra.ui.MainActivity] and
+     * [com.timbra.player.PlaybackService].
+     */
+    fun neighbourFolders(
+        folders: List<FolderNode>,
+        vararg anchorPaths: String?,
+    ): Pair<FolderNode?, FolderNode?> {
+        val idx = anchorPaths.asSequence()
+            .filter { !it.isNullOrEmpty() }
+            .map { anchor -> folders.indexOfFirst { it.path == anchor } }
+            .firstOrNull { it >= 0 } ?: return null to null
+        return folders.getOrNull(idx - 1) to folders.getOrNull(idx + 1)
+    }
 }

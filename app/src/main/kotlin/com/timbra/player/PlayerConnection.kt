@@ -5,14 +5,13 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
-import com.timbra.data.MediaRepository
+import com.timbra.app
 import com.timbra.data.model.Track
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +35,13 @@ data class UiPlayback(
     /** Decoded audio format (from the service via session extras); 0/-1 when unknown. */
     val sampleRateHz: Int = 0,
     val bitrateBps: Int = 0,
+    /**
+     * Monotonic count of genuine LIVE song transitions (ExoPlayer AUTO end / SEEK next-prev-tap)
+     * observed while connected. The player screen animates its card-flip only when this advances,
+     * so a song that changed while backgrounded — surfaced by a reconnect state-sync that leaves
+     * the count untouched — snaps into place instead of spuriously flipping.
+     */
+    val liveTransitionSeq: Int = 0,
 )
 
 /** One entry in the play timeline, used to page album art and show the Queue list. */
@@ -126,7 +132,22 @@ class PlayerConnection(private val context: Context) {
         return h
     }
 
+    /** Bumped on each genuine live song transition (see [UiPlayback.liveTransitionSeq]). */
+    private var liveTransitionSeq = 0
+
     private val listener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // Only actual playback movement observed live counts as a flip-worthy transition:
+            // AUTO (a song ended into the next) and SEEK (Next/Prev/tap). REPEAT (repeat-one) and
+            // PLAYLIST_CHANGED (queue rebuild, or the reconnect state-sync after backgrounding)
+            // must NOT flip — the latter is exactly the spurious foreground animation we avoid.
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+            ) {
+                liveTransitionSeq++
+            }
+        }
+
         override fun onEvents(player: Player, events: Player.Events) {
             pushState()
             if (events.contains(Player.EVENT_TIMELINE_CHANGED) &&
@@ -183,6 +204,8 @@ class PlayerConnection(private val context: Context) {
             if (future.isCancelled) return@addListener
             controller = runCatching { future.get() }.getOrNull()?.also { it.addListener(listener) }
                 ?: return@addListener
+            // The UI now owns the automatic Advance-List advance; the service defers while attached.
+            context.app.uiControllerAttached = true
             readAudioFormat(controller!!.sessionExtras)
             // A fresh controller doesn't replay events, so if a song is already playing the
             // listener won't fire to start the ticker — kick it here (it self-stops when paused).
@@ -199,6 +222,9 @@ class PlayerConnection(private val context: Context) {
 
     fun release() {
         savePosition()
+        // Hand the automatic Advance-List advance back to the service before dropping the listener,
+        // so a folder that ends while backgrounded still rolls into the next one.
+        context.app.uiControllerAttached = false
         handler.removeCallbacks(ticker)
         controller?.removeListener(listener)
         controllerFuture?.let { MediaController.releaseFuture(it) }
@@ -266,7 +292,7 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         queueGeneration++
         c.setMediaItems(
-            tracks.mapIndexed { i, t -> t.toMediaItem(enqueued = enqueuedFlags.getOrElse(i) { false }) },
+            tracks.mapIndexed { i, t -> t.toMediaItem(context, enqueued = enqueuedFlags.getOrElse(i) { false }) },
             index.coerceIn(0, maxOf(0, tracks.size - 1)),
             positionMs,
         )
@@ -343,7 +369,7 @@ class PlayerConnection(private val context: Context) {
         preShuffle = if (appShuffle != ShuffleMode.OFF) {
             PreShuffle(tracks.map { it.id }, start, 0)
         } else null
-        c.setMediaItems(tracks.map { it.toMediaItem() }, start, 0)
+        c.setMediaItems(tracks.map { it.toMediaItem(context) }, start, 0)
         c.prepare()
         if (play) c.play()
         return true
@@ -357,7 +383,7 @@ class PlayerConnection(private val context: Context) {
         val insertStart = ((if (enqueueEnd > cur) enqueueEnd else cur) + 1).coerceAtMost(c.mediaItemCount)
         var at = insertStart
         for (t in tracks) {
-            c.addMediaItem(at, t.toMediaItem(enqueued = true))
+            c.addMediaItem(at, t.toMediaItem(context, enqueued = true))
             at++
         }
         enqueueEnd = at - 1
@@ -516,13 +542,13 @@ class PlayerConnection(private val context: Context) {
             val cur = c.currentMediaItemIndex
             if (cur + 1 < c.mediaItemCount) c.removeMediaItems(cur + 1, c.mediaItemCount)
             if (cur > 0) c.removeMediaItems(0, cur)
-            val before = tracks.subList(0, pos).map { it.toMediaItem() }
-            val after = tracks.subList(pos + 1, tracks.size).map { it.toMediaItem() }
+            val before = tracks.subList(0, pos).map { it.toMediaItem(context) }
+            val after = tracks.subList(pos + 1, tracks.size).map { it.toMediaItem(context) }
             if (before.isNotEmpty()) c.addMediaItems(0, before)
             if (after.isNotEmpty()) c.addMediaItems(c.mediaItemCount, after)
         } else {
             // Current song isn't in the original queue (played into shuffle) — restore as saved.
-            c.setMediaItems(tracks.map { it.toMediaItem() }, snap.index.coerceIn(0, tracks.size - 1), snap.positionMs)
+            c.setMediaItems(tracks.map { it.toMediaItem(context) }, snap.index.coerceIn(0, tracks.size - 1), snap.positionMs)
             c.prepare()
         }
         saveModes()
@@ -555,12 +581,12 @@ class PlayerConnection(private val context: Context) {
             if (cur + 1 < c.mediaItemCount) c.removeMediaItems(cur + 1, c.mediaItemCount)
             if (cur > 0) c.removeMediaItems(0, cur)
             // Only the current item remains (index 0). Wrap the rest of the library around it.
-            val before = tracks.subList(0, idx).map { it.toMediaItem() }
-            val after = tracks.subList(idx + 1, tracks.size).map { it.toMediaItem() }
+            val before = tracks.subList(0, idx).map { it.toMediaItem(context) }
+            val after = tracks.subList(idx + 1, tracks.size).map { it.toMediaItem(context) }
             if (before.isNotEmpty()) c.addMediaItems(0, before)
             if (after.isNotEmpty()) c.addMediaItems(c.mediaItemCount, after)
         } else {
-            c.setMediaItems(tracks.map { it.toMediaItem() }, Random.nextInt(tracks.size), 0)
+            c.setMediaItems(tracks.map { it.toMediaItem(context) }, Random.nextInt(tracks.size), 0)
             c.prepare()
             c.play()
         }
@@ -623,7 +649,10 @@ class PlayerConnection(private val context: Context) {
     private fun pushState() {
         val c = controller
         if (c == null || c.currentMediaItem == null) {
-            _state.value = UiPlayback()
+            // Keep the live-transition counter monotonic even through a momentary no-item state
+            // (e.g. the reconnect churn on foreground): resetting it to 0 here would make the very
+            // next real song look like a fresh transition and spuriously flip the deck.
+            _state.value = UiPlayback(liveTransitionSeq = liveTransitionSeq)
             return
         }
         val md = c.mediaMetadata
@@ -643,32 +672,8 @@ class PlayerConnection(private val context: Context) {
             repeat = appRepeat,
             sampleRateHz = sampleRateHz,
             bitrateBps = bitrateBps,
+            liveTransitionSeq = liveTransitionSeq,
         )
     }
 
-    private fun Track.toMediaItem(enqueued: Boolean = false): MediaItem {
-        val extras = android.os.Bundle().apply {
-            putLong(KEY_ALBUM_ID, albumId)
-            putString(KEY_PATH, path)
-            if (enqueued) putBoolean(KEY_ENQUEUED, true)
-        }
-        val metadata = MediaMetadata.Builder()
-            .setTitle(title.ifBlank { fileName })
-            .setArtist(artist.ifBlank { context.getString(com.timbra.R.string.unknown_artist) })
-            .setAlbumTitle(album.ifBlank { context.getString(com.timbra.R.string.unknown_album) })
-            .setArtworkUri(MediaRepository.albumArtUri(albumId))
-            .setExtras(extras)
-            .build()
-        return MediaItem.Builder()
-            .setMediaId(id.toString())
-            .setUri(uri)
-            .setMediaMetadata(metadata)
-            .build()
-    }
-
-    companion object {
-        private const val KEY_ALBUM_ID = "pa_album_id"
-        private const val KEY_PATH = "pa_path"
-        private const val KEY_ENQUEUED = "pa_enqueued"
-    }
 }

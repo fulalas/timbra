@@ -22,7 +22,17 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.timbra.app
+import com.timbra.data.FolderTreeBuilder
+import com.timbra.data.SortDefaults
+import com.timbra.data.comparatorFor
+import com.timbra.repository
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Hosts the ExoPlayer instance and a MediaSession so playback survives the UI and
@@ -46,6 +56,10 @@ class PlaybackService : MediaSessionService() {
      * position every few seconds while playing, on every pause, and at shutdown.
      */
     private lateinit var store: PlaybackStateStore
+
+    /** Scope for the background Advance-List folder lookup (folder tree read off the main thread). */
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
     private val saveHandler = Handler(Looper.getMainLooper())
     private val positionSaver = object : Runnable {
         override fun run() {
@@ -106,6 +120,12 @@ class PlaybackService : MediaSessionService() {
 
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 if (shuffleModeEnabled) resetShuffleSession(player)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // The queue ended. When the UI is attached it drives the Advance-List advance;
+                // when it isn't (backgrounded / Activity gone) nothing else would, so do it here.
+                if (playbackState == Player.STATE_ENDED) advanceToNextFolderIfDetached(player)
             }
 
             override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
@@ -269,6 +289,50 @@ class PlaybackService : MediaSessionService() {
         player.setShuffleOrder(DefaultShuffleOrder(order, System.nanoTime()))
     }
 
+    /**
+     * Advance-List continuation when the queue ends with no UI attached. Advance-List maps to
+     * REPEAT_MODE_OFF, so ExoPlayer just stops at the end; the app-level advance normally lives
+     * in the UI (richer deck/phantom/folderContext handling), but the UI's controller is gone
+     * once the app is backgrounded or its Activity destroyed — leaving nothing to roll the last
+     * song of a folder into the next one with the screen off. This is that fallback.
+     *
+     * Anchored on the current song's directory (the queue is the folder it was loaded from),
+     * matching the UI's own fallback when it has no folderContext. No-op while the UI is attached
+     * (it owns the advance then) or when the persisted repeat mode isn't Advance-List.
+     */
+    private fun advanceToNextFolderIfDetached(player: ExoPlayer) {
+        if (app.uiControllerAttached) return
+        if (store.loadModes().second != RepeatMode.ADVANCE.ordinal) return
+        val path = player.currentMediaItem?.mediaMetadata?.extras?.getString(KEY_PATH) ?: return
+        val dir = path.substringBeforeLast('/', "")
+        if (dir.isEmpty()) return
+        serviceScope.launch {
+            val (_, next) = FolderTreeBuilder.neighbourFolders(repository.songFolders(), dir)
+            val tracks = next?.tracks?.sortedWith(comparatorFor(SortDefaults.FOLDER_SONGS))
+                ?: return@launch  // no next folder: stop here
+            if (tracks.isEmpty()) return@launch
+            // The folder lookup was async: bail if the user reconnected or the player moved on
+            // in the meantime, so we never stomp a fresh queue or a resumed UI's own advance.
+            if (app.uiControllerAttached) return@launch
+            if (player.playbackState != Player.STATE_ENDED) return@launch
+            if (player.currentMediaItem?.mediaMetadata?.extras?.getString(KEY_PATH) != path) return@launch
+            player.setMediaItems(tracks.map { it.toMediaItem(this@PlaybackService) }, 0, 0L)
+            player.prepare()
+            player.play()
+            // The UI persists the queue on timeline changes, but it's detached here — so mirror
+            // that ourselves. Otherwise a cold start after the process is killed mid-background
+            // would restore the STALE previous folder at a now-meaningless index. Also downgrade
+            // Shuffle-All to Shuffle-Songs (the pool is now this one folder), matching the UI's
+            // own advance, so the restored shuffle icon stays truthful.
+            val (shuffleOrdinal, repeatOrdinal) = store.loadModes()
+            if (shuffleOrdinal == ShuffleMode.ALL.ordinal) {
+                store.saveModes(ShuffleMode.CURRENT.ordinal, repeatOrdinal)
+            }
+            store.saveQueue(tracks.map { it.id }, emptyList())
+            store.savePosition(0, 0)
+        }
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
         mediaSession
 
@@ -280,6 +344,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         saveHandler.removeCallbacks(positionSaver)
         // Final checkpoint before the player goes away, so a cold start resumes exactly here.
         mediaSession?.player?.let { p ->

@@ -30,6 +30,7 @@ import androidx.navigation.ui.setupActionBarWithNavController
 import com.timbra.R
 import com.timbra.app
 import com.timbra.repository
+import com.timbra.data.FolderTreeBuilder
 import com.timbra.data.SortDefaults
 import com.timbra.data.comparatorFor
 import com.timbra.data.model.FolderNode
@@ -369,15 +370,13 @@ class MainActivity : AppCompatActivity() {
     private suspend fun neighbourSongFolders(): Pair<FolderNode?, FolderNode?> {
         val filePath = player.state.value.filePath
         if (filePath.isBlank()) return null to null
-        val folders = repository.songFolders()
-        var idx = player.folderContext
-            ?.let { ctx -> folders.indexOfFirst { it.path == ctx } } ?: -1
-        if (idx < 0) {
-            val dir = filePath.substringBeforeLast('/', "")
-            idx = folders.indexOfFirst { it.path == dir }
-        }
-        if (idx < 0) return null to null
-        return folders.getOrNull(idx - 1) to folders.getOrNull(idx + 1)
+        // Prefer the folder a jump/advance last loaded; fall back to the playing file's own
+        // directory (always a song-folder entry) when it's absent or stale after a rescan.
+        return FolderTreeBuilder.neighbourFolders(
+            repository.songFolders(),
+            player.folderContext,
+            filePath.substringBeforeLast('/', ""),
+        )
     }
 
     /**
