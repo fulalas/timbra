@@ -1,34 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Landscape: two-pane split. Art fills the left half; info/seek/controls
+     stack in the right half so the transport doesn't spread edge-to-edge.
+     Same view IDs as layout/fragment_player.xml so the binding is shared. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:background="@color/pa_window">
 
-    <!-- Deck window: clips the pager to the art region so a card-flip glide (translationY)
-         slides WITHIN this area and never draws over the transport controls below. -->
+    <!-- Left pane: deck window clips the pager to the art region so a card-flip glide
+         (translationY) slides WITHIN this area and never draws over the right pane. -->
     <FrameLayout
         android:id="@+id/deck_window"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
         android:layout_weight="1"
         android:clipChildren="true">
 
-        <!-- Fills the window; fitCenter then centers the art within it. -->
+        <!-- Album art, fitCenter within the left half. -->
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/art_pager"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
     </FrameLayout>
 
-    <!-- Controls sit straight on the pure-black window (no deck_bg panel). -->
+    <!-- Right pane: controls, vertically centered on the pure-black window. -->
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
         android:orientation="vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="18dp">
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="24dp"
+        android:paddingVertical="16dp">
 
         <!-- Tapping the song info jumps to the track's folder. -->
         <LinearLayout
@@ -111,8 +116,8 @@
             <!-- Repeat pinned to the far left. -->
             <ImageButton
                 android:id="@+id/repeat"
-                android:layout_width="60dp"
-                android:layout_height="60dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:scaleType="fitCenter"
                 android:padding="12dp"
@@ -126,8 +131,8 @@
 
             <ImageButton
                 android:id="@+id/prev"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:scaleType="fitCenter"
                 android:padding="8dp"
@@ -136,18 +141,18 @@
 
             <ImageButton
                 android:id="@+id/play"
-                android:layout_width="77dp"
-                android:layout_height="77dp"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:scaleType="fitCenter"
-                android:layout_marginHorizontal="8dp"
+                android:layout_marginHorizontal="6dp"
                 android:src="@drawable/deck_play"
                 android:contentDescription="@string/cd_play" />
 
             <ImageButton
                 android:id="@+id/next"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:scaleType="fitCenter"
                 android:padding="8dp"
@@ -162,8 +167,8 @@
             <!-- Shuffle pinned to the far right. -->
             <ImageButton
                 android:id="@+id/shuffle"
-                android:layout_width="60dp"
-                android:layout_height="60dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:scaleType="fitCenter"
                 android:padding="12dp"

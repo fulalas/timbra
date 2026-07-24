@@ -1,6 +1,8 @@
 package com.timbra.ui.queue
 
 import android.annotation.SuppressLint
+import android.content.ContentUris
+import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ViewGroup
@@ -63,7 +65,9 @@ class QueueAdapter(
         applyNowPlaying(holder.b.root, holder.b.title, playing)
         // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not
         // GONE) so every row's text stays aligned in a mixed queue.
-        ArtLoader.load(holder.b.thumb, owner, null, item.albumId) { holder.b.thumb.isInvisible = !it }
+        // Load via the track's content Uri so embedded-only covers are found here too.
+        val trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, item.mediaId)
+        ArtLoader.load(holder.b.thumb, owner, trackUri, item.albumId) { holder.b.thumb.isInvisible = !it }
         holder.b.root.setOnClickListener { onClick(item.timelineIndex) }
         holder.b.root.setOnLongClickListener { onLong(item); true }
         holder.b.dragHandle.setOnTouchListener { _, e ->

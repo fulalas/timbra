@@ -1,6 +1,11 @@
 package com.timbra.ui.player
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -8,6 +13,8 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.animation.AnimationUtils
 import android.view.animation.DecelerateInterpolator
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.fragment.app.Fragment
@@ -27,6 +34,7 @@ import com.timbra.repository
 import com.timbra.ui.Format
 import com.timbra.ui.MainActivity
 import com.timbra.ui.TitleMarquee
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -133,6 +141,11 @@ class PlayerFragment : Fragment() {
      *  fire a second jump from stale state. */
     private var folderJumping = false
 
+    /** True while [runAdvance]'s advanceFolder call is actually suspended. Distinguishes a
+     *  LIVE advance (pendingAdvance already consumed, queue swap still coming — must not be
+     *  disturbed) from a STRANDED `advancing` latch that the self-heal may safely clear. */
+    private var advanceInFlight = false
+
     /** True while a finger holds the deck in a vertical drag. Gates deck mutations:
      *  [syncPager] and [rebuildPages] must not move/rebuild pages under the held finger. */
     private var vDragging = false
@@ -148,6 +161,15 @@ class PlayerFragment : Fragment() {
      *  physical gesture commits on every screen (a raw px/s constant would be ~3x more
      *  sensitive on xxhdpi than mdpi). */
     private val commitFlingPxS by lazy { COMMIT_FLING_DP_S * resources.displayMetrics.density }
+
+    /** Temporary deck diagnostics (adb logcat -s TimbraDeck). */
+    private fun dlog(msg: String) = Log.d(
+        "TimbraDeck",
+        "$msg | idx=$playerIndex lead=$leadOffset cur=${_b?.artPager?.currentItem} " +
+            "n=${if (::artAdapter.isInitialized) artAdapter.itemCount else -1} " +
+            "adv=$advancing inFl=$advanceInFlight jump=$folderJumping idle=$pagerIdle " +
+            "vDrag=$vDragging pendAdv=${pendingAdvance != null} pendReb=$pendingRebuild",
+    )
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
         _b = FragmentPlayerBinding.inflate(inflater, container, false)
@@ -169,6 +191,7 @@ class PlayerFragment : Fragment() {
         pagerIdle = true
         advancing = false
         advanceReady = false
+        advanceInFlight = false
         pendingAdvance = null
         folderJumping = false
         vDragging = false
@@ -187,6 +210,21 @@ class PlayerFragment : Fragment() {
         artAdapter = ArtPagerAdapter(viewLifecycleOwner)
         b.artPager.adapter = artAdapter
         b.artPager.offscreenPageLimit = 1
+        // The art deck sits flush against a screen edge (the left edge in the landscape
+        // two-pane layout, both edges in portrait) — the system back-gesture zone. Claim a
+        // gesture-exclusion rect so a swipe that starts near the edge reaches the pager
+        // instead of being stolen by edge-navigation. The OS silently grants at most 200dp
+        // per edge (taken bottom-up from the requested rects), so a full-deck rect would
+        // only protect the deck's LOWEST 200dp — request a 200dp band centred on the deck
+        // instead, covering where card swipes actually start. API 29+ (back gesture = Q).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            b.artPager.addOnLayoutChangeListener { v, left, top, right, bottom, _, _, _, _ ->
+                val h = bottom - top
+                val band = (200 * resources.displayMetrics.density).toInt().coerceAtMost(h)
+                val bandTop = (h - band) / 2
+                v.systemGestureExclusionRects = listOf(Rect(0, bandTop, right - left, bandTop + band))
+            }
+        }
         // Vertical swipes on the art deck jump to a sibling folder — up = next, down =
         // previous, in filename order. A direct jump (NOT history navigation). Like the
         // pager's own horizontal swipe, the deck FOLLOWS the finger: a dominantly-vertical
@@ -285,6 +323,7 @@ class PlayerFragment : Fragment() {
         // Swiping the art pager (deck-style card flip) changes the track.
         b.artPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                dlog("pageSelected($position) sawDrag=$sawDrag")
                 // Only a real user drag may change the track; programmatic moves and the clamp
                 // ViewPager2 does when the queue shrinks also land here and must be ignored.
                 // Once an advance is pending, ignore everything until the pager settles: a fling
@@ -338,7 +377,20 @@ class PlayerFragment : Fragment() {
             }
 
             override fun onPageScrollStateChanged(state: Int) {
-                if (state == ViewPager2.SCROLL_STATE_DRAGGING) sawDrag = true
+                dlog("scrollState=$state")
+                if (state == ViewPager2.SCROLL_STATE_DRAGGING) {
+                    sawDrag = true
+                    // Self-heal: `advancing` still set when a NEW user drag starts — with no
+                    // advance armed (pendingAdvance == null) AND none actually running
+                    // (advanceInFlight == false; clearing a LIVE advance would let its queue
+                    // swap land mid-drag and corrupt the gesture) — is a stranded latch from
+                    // an advance that never finalized. Clear it so this gesture works instead
+                    // of the deck staying dead until the screen is recreated. folderJumping
+                    // needs no heal: jumpFolder's finally guarantees its release.
+                    if (pendingAdvance == null && !advanceInFlight && !folderJumping && advancing) {
+                        advancing = false; advanceReady = false
+                    }
+                }
                 pagerIdle = state == ViewPager2.SCROLL_STATE_IDLE
                 if (pagerIdle) {
                     sawDrag = false
@@ -453,15 +505,18 @@ class PlayerFragment : Fragment() {
         // During a folder advance the pager position is owned by the advance (it stays on the
         // phantom until finalizeAdvanceIfReady jumps it). A state-driven sync here would run
         // before the queue rebuild and land on the OLD queue's index — a wrong-folder flash.
-        if (advancing) return
+        if (advancing) { dlog("sync($index) BLOCKED advancing"); return }
         val pos = pagePosOf(index)
-        if (pos !in 0 until artAdapter.itemCount) return
+        if (pos !in 0 until artAdapter.itemCount) { dlog("sync($index) BLOCKED range pos=$pos"); return }
         // Don't fight a gesture in progress — neither a horizontal drag/fling nor a held
         // vertical drag; the settle handlers re-sync once at rest ([afterVerticalDrag]).
-        if (!pagerIdle || vDragging) return
+        if (!pagerIdle || vDragging) { dlog("sync($index) BLOCKED busy pos=$pos"); return }
         // During a vertical folder jump the deck is off-screen: reposition by snapping — an
         // animated flip could still be mid-scroll when the deck slides back into view.
-        if (b.artPager.currentItem != pos) b.artPager.setCurrentItem(pos, animate && !folderJumping)
+        if (b.artPager.currentItem != pos) {
+            dlog("sync($index) MOVE -> $pos")
+            b.artPager.setCurrentItem(pos, animate && !folderJumping)
+        }
         pagerSynced = true
     }
 
@@ -469,6 +524,7 @@ class PlayerFragment : Fragment() {
     private fun forceSyncTo(index: Int) {
         if (index < 0) return
         val pos = pagePosOf(index)
+        dlog("forceSync($index) -> $pos")
         if (pos in 0 until artAdapter.itemCount && b.artPager.currentItem != pos) {
             b.artPager.setCurrentItem(pos, false)
         }
@@ -502,7 +558,7 @@ class PlayerFragment : Fragment() {
         // the finger and fire spurious selections) or a held vertical drag; the settle
         // handlers apply the deferred rebuild ([afterVerticalDrag]). A landing folder
         // advance is the exception — that swap is what the settle is waiting on.
-        if ((!pagerIdle || vDragging) && !landingAdvance) { pendingRebuild = true; return }
+        if ((!pagerIdle || vDragging) && !landingAdvance) { dlog("rebuild DEFER"); pendingRebuild = true; return }
         val current = queueItems.getOrNull(playerIndex)
         val pages = ArrayList<QueueItem>(queueItems.size + 2)
         if (player.currentShuffle() != ShuffleMode.OFF && current != null) {
@@ -518,13 +574,23 @@ class PlayerFragment : Fragment() {
             pages.addAll(queueItems)
             phantomNext?.let { pages.add(it) }
         }
+        // Mark the advance landing at SUBMIT time, not in the commit callback: AsyncListDiffer
+        // CANCELS a still-running diff — callback included — when a newer list is submitted,
+        // and a phantom recompute racing in right behind the landing rebuild did exactly that.
+        // With the flag set only in the cancelled callback, `advancing` stayed latched forever:
+        // every pager sync blocked, deck parked on a neighbour's card (the wrong/blank cover).
+        if (landingAdvance) advanceReady = true
+        dlog("rebuild SUBMIT n=${pages.size}")
         artAdapter.submitList(pages) {
+            dlog("rebuild COMMIT")
             // submitList commits asynchronously; the view may already be torn down by the time
             // this runs (rapid nav / rotation), so bail before touching b/requireActivity().
             if (_b == null) return@submitList
             when {
-                landingAdvance -> { advanceReady = true; finalizeAdvanceIfReady() }
-                advancing -> Unit
+                // ANY commit that lands while an advance is waiting finalizes it — this may be
+                // the landing rebuild itself or the phantom rebuild that superseded it; either
+                // way the committed list carries the new queue, so the reposition is correct.
+                advancing -> finalizeAdvanceIfReady()
                 // Post the alignment out of the RecyclerView update pass: a setCurrentItem
                 // issued inside it gets deferred to the next layout frame, which may never
                 // come while paused — the stale reposition then swallows the next gesture.
@@ -550,32 +616,77 @@ class PlayerFragment : Fragment() {
         if (advancing || folderJumping) { glideDeckTo(0f); return }
         folderJumping = true
         viewLifecycleOwner.lifecycleScope.launch {
-            val oldId = player.state.value.mediaId
-            val out = if (forward) -b.artPager.height.toFloat() else b.artPager.height.toFloat()
-            val slideOut = CompletableDeferred<Unit>()
-            // Continue from wherever the finger left the deck and glide fully out.
-            glideDeckTo(out) { slideOut.complete(Unit) }
-            val folder = (requireActivity() as MainActivity).jumpToNeighbourFolder(forward)
-            if (folder == null) {
-                // No neighbour folder (or nothing playing): spring back from wherever it is.
+            try {
+                val oldId = player.state.value.mediaId
+                val out = if (forward) -b.artPager.height.toFloat() else b.artPager.height.toFloat()
+                val slideOut = CompletableDeferred<Unit>()
+                // The outgoing animation runs on a bitmap SNAPSHOT of the deck; the live pager is
+                // hidden for the whole swap. The jump's queue replacement rebinds the visible page
+                // mid-glide (the new folder's cover used to paint as a band on the outgoing deck —
+                // the flash), and view-recycling could briefly show a previously-visited cover.
+                // With only a frozen snapshot on screen, no rebind can ever flash. Snapshot failure
+                // (e.g. an unsnapshotable hardware bitmap) falls back to gliding the live pager.
+                val overlay = runCatching {
+                    val bmp = Bitmap.createBitmap(b.artPager.width, b.artPager.height, Bitmap.Config.ARGB_8888)
+                    b.artPager.draw(Canvas(bmp))
+                    ImageView(requireContext()).apply { setImageBitmap(bmp) }
+                }.getOrNull()
+                if (overlay != null) {
+                    b.deckWindow.addView(
+                        overlay,
+                        FrameLayout.LayoutParams(b.artPager.width, b.artPager.height),
+                    )
+                    // draw() captures content untranslated — carry the finger's offset over so the
+                    // hand-off is seamless, then park the hidden pager.
+                    overlay.translationY = b.artPager.translationY
+                    b.artPager.visibility = View.INVISIBLE
+                    b.artPager.translationY = 0f
+                    glideViewTo(overlay, out) { slideOut.complete(Unit) }
+                } else {
+                    glideDeckTo(out) { slideOut.complete(Unit) }
+                }
+                val folder = (requireActivity() as MainActivity).jumpToNeighbourFolder(forward)
+                if (folder == null) {
+                    // No neighbour folder (or nothing playing): spring back from wherever the
+                    // outgoing leg is; the finally below reveals the pager and drops the overlay.
+                    overlay?.let { b.artPager.translationY = it.translationY }
+                    glideDeckTo(0f)
+                    return@launch
+                }
+                withTimeoutOrNull(LANDING_TIMEOUT_MS) {
+                    player.state.first { it.mediaId != oldId }
+                    // Deck committed = the adapter's list has the new current song on the page
+                    // the pager will rest on. (Phantom recomputes may take one more commit.)
+                    // Check first, THEN await the next commit: state and commit order isn't
+                    // guaranteed, and a commit that already landed will never re-signal.
+                    while (!deckShowsCurrent()) awaitDeckCommit()
+                }
+                showModePopup(folder)
+                // Bounded: the glide's onEnd never fires if another glide replaced it, and an
+                // unbounded await here would strand [folderJumping] and freeze the deck.
+                withTimeoutOrNull(SLIDE_MS * 3) { slideOut.await() }
+                dlog("jump slideOut done")
+                overlay?.let { b.deckWindow.removeView(it) }
+                // Land the hidden pager on the current song's page before revealing it, so the
+                // slide-in can only ever show the new folder's own art.
+                forceSyncTo(playerIndex)
+                // Enter from the opposite edge with the new folder's art.
+                b.artPager.translationY = -out
+                b.artPager.visibility = View.VISIBLE
                 glideDeckTo(0f)
+            } finally {
+                // ALWAYS release the latch — a jumpToNeighbourFolder that throws, a detached
+                // activity, or a cancelled coroutine would otherwise leave [folderJumping] set
+                // forever, deadening every deck gesture until the screen is recreated. And never
+                // leave the live pager hidden or a snapshot overlay behind (idempotent).
                 folderJumping = false
-                return@launch
+                _b?.let { bb ->
+                    bb.artPager.visibility = View.VISIBLE
+                    while (bb.deckWindow.childCount > 1) {
+                        bb.deckWindow.removeViewAt(bb.deckWindow.childCount - 1)
+                    }
+                }
             }
-            withTimeoutOrNull(LANDING_TIMEOUT_MS) {
-                player.state.first { it.mediaId != oldId }
-                // Deck committed = the adapter's list has the new current song on the page
-                // the pager will rest on. (Phantom recomputes may take one more commit.)
-                // Check first, THEN await the next commit: state and commit order isn't
-                // guaranteed, and a commit that already landed will never re-signal.
-                while (!deckShowsCurrent()) awaitDeckCommit()
-            }
-            showModePopup(folder)
-            slideOut.await()
-            // Enter from the opposite edge with the new folder's art.
-            b.artPager.translationY = -out
-            glideDeckTo(0f)
-            folderJumping = false
         }
     }
 
@@ -619,8 +730,13 @@ class PlayerFragment : Fragment() {
      * Starting a new glide (or the finger re-claiming the deck) cancels the previous one,
      * whose onEnd then never fires.
      */
-    private fun glideDeckTo(target: Float, onEnd: (() -> Unit)? = null) {
-        val start = b.artPager.translationY
+    private fun glideDeckTo(target: Float, onEnd: (() -> Unit)? = null) =
+        glideViewTo(b.artPager, target, onEnd)
+
+    /** Same frame-stepped glide, but on an arbitrary view — the folder jump animates a bitmap
+     *  snapshot overlay instead of the live pager (see [jumpFolder]). */
+    private fun glideViewTo(view: View, target: Float, onEnd: (() -> Unit)? = null) {
+        val start = view.translationY
         if (start == target) { deckGlide = null; onEnd?.invoke(); return }
         val t0 = AnimationUtils.currentAnimationTimeMillis()
         val glide = object : Runnable {
@@ -628,13 +744,13 @@ class PlayerFragment : Fragment() {
                 if (_b == null || deckGlide !== this) return
                 val f = ((AnimationUtils.currentAnimationTimeMillis() - t0).toFloat() / SLIDE_MS)
                     .coerceIn(0f, 1f)
-                b.artPager.translationY = start + (target - start) * GLIDE_EASE.getInterpolation(f)
-                if (f < 1f) b.artPager.postOnAnimation(this)
+                view.translationY = start + (target - start) * GLIDE_EASE.getInterpolation(f)
+                if (f < 1f) view.postOnAnimation(this)
                 else { deckGlide = null; onEnd?.invoke() }
             }
         }
         deckGlide = glide
-        b.artPager.postOnAnimation(glide)
+        view.postOnAnimation(glide)
     }
 
     /**
@@ -644,7 +760,18 @@ class PlayerFragment : Fragment() {
      */
     private fun runAdvance(forward: Boolean) {
         viewLifecycleOwner.lifecycleScope.launch {
-            val advanced = (requireActivity() as MainActivity).advanceFolder(forward)
+            // A throwing advanceFolder (detached activity, repository error) would otherwise
+            // leave [advancing] set forever and freeze the deck — treat failure as a no-op.
+            advanceInFlight = true
+            val advanced = try {
+                (requireActivity() as MainActivity).advanceFolder(forward)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                false
+            } finally {
+                advanceInFlight = false
+            }
             if (!advanced && advancing) abandonAdvance()
         }
     }
@@ -727,6 +854,7 @@ class PlayerFragment : Fragment() {
             if (phantomKey != key) return@launch
             phantomNext = next?.let { phantomOf(it, PHANTOM_NEXT_INDEX) }
             phantomPrev = prev?.let { phantomOf(it, PHANTOM_PREV_INDEX) }
+            dlog("phantom recompute landed")
             rebuildPages()
         }
     }
@@ -753,7 +881,8 @@ class PlayerFragment : Fragment() {
         // rebuilds (Shuffle-All / restore-on-off) keep the same song but change its index —
         // those repositions are snapped by rebuildPages, so animating here would be spurious.
         // This runs BEFORE updatePhantom so the shuffle deck can flip onto the OLD edge card.
-        if (s.mediaId != lastBoundMediaId) {
+        val songChanged = s.mediaId != lastBoundMediaId
+        if (songChanged) {
             lastBoundMediaId = s.mediaId
             // Animate the flip only for a LIVE transition — one ExoPlayer reported (AUTO end /
             // SEEK next-prev-tap) while we were connected, which advances liveTransitionSeq. A song
@@ -784,6 +913,18 @@ class PlayerFragment : Fragment() {
             }
         }
         updatePhantom(s)
+
+        // Belt-and-braces (runs every position tick): a phantom recompute can swap the leading
+        // card underneath a RESTING pager — e.g. right after a folder jump, replacing the
+        // previous-folder card can leave ViewPager2 parked on it, showing the neighbour
+        // folder's cover while a different song plays — and nothing else re-aligns a pager
+        // whose song did NOT change. syncPager's own gates (mid-gesture, advancing, jumping,
+        // out-of-range) make this a strict no-op except when the deck is at rest off the
+        // current page. Skipped on the song-change tick itself: that bind may have just
+        // started an intentional flip onto an edge card (shuffle) that must not be undone.
+        if (s.hasItem && !songChanged && s.shuffle == ShuffleMode.OFF) {
+            syncPager(s.queueIndex, animate = false)
+        }
 
         // Marquee the title only when it actually changes (bind runs every position tick, and
         // re-setting would restart the scroll from the top each time).

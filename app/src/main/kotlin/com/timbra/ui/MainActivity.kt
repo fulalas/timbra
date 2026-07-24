@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
     private var onPlayerScreen = false
     private var lastPlayback = UiPlayback()
     private var miniUserSeeking = false
-    private var miniArtAlbumId = Long.MIN_VALUE
+    private var miniArtMediaId = Long.MIN_VALUE
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -451,7 +451,7 @@ class MainActivity : AppCompatActivity() {
     private fun bindMiniPlayer(s: UiPlayback) = with(binding.miniPlayer) {
         lastPlayback = s
         updateMiniVisibility()
-        if (!s.hasItem) { miniArtAlbumId = Long.MIN_VALUE; return }
+        if (!s.hasItem) { miniArtMediaId = Long.MIN_VALUE; return }
         miniTitle.text = s.title.ifBlank { getString(R.string.nothing_playing) }
         miniSubtitle.text = s.artist
         miniPlay.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)
@@ -463,9 +463,14 @@ class MainActivity : AppCompatActivity() {
         }
         // Only (re)load the cover when the track actually changes, otherwise it flickers
         // on every 500ms position tick. No art → no thumbnail (no generic placeholder).
-        if (s.albumId != miniArtAlbumId) {
-            miniArtAlbumId = s.albumId
-            ArtLoader.load(miniArt, this@MainActivity, null, s.albumId) { miniArt.isVisible = it }
+        if (s.mediaId != miniArtMediaId) {
+            miniArtMediaId = s.mediaId
+            // Load via the track's content Uri so embedded-only covers are found too (and keyed
+            // per TRACK — same album, different files, different embedded art is possible).
+            val uri = if (s.mediaId >= 0) {
+                android.content.ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, s.mediaId)
+            } else null
+            ArtLoader.load(miniArt, this@MainActivity, uri, s.albumId) { miniArt.isVisible = it }
         }
     }
 

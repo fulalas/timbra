@@ -1,5 +1,7 @@
 package com.timbra.ui.player
 
+import android.content.ContentUris
+import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.view.isVisible
@@ -31,10 +33,21 @@ class ArtPagerAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = getItem(position)
+        // Load via the track's content Uri (not albumId alone) so the deck finds embedded art
+        // through loadThumbnail — same path the browse list uses — instead of only the legacy
+        // album-art table, which misses covers on albums MediaStore didn't index there.
+        val trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, item.mediaId)
         // Pages without art show the glowing app mark instead of a generic placeholder.
-        ArtLoader.load(holder.b.pageArt, owner, null, item.albumId) { has ->
+        ArtLoader.load(holder.b.pageArt, owner, trackUri, item.albumId) { has ->
             holder.b.pageBrand.isVisible = !has
         }
+    }
+
+    // Blank a recycled page so a pooled ImageView can't flash the previous song's cover
+    // before its next bind paints.
+    override fun onViewRecycled(holder: VH) {
+        ArtLoader.clear(holder.b.pageArt)
+        holder.b.pageBrand.isVisible = false
     }
 
     companion object {
