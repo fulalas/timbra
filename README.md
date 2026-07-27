@@ -3,14 +3,16 @@
 Timbra is a free lightweight music player for Android inspired by Poweramp v2. It rebuilds
 that look and feel as original code on a modern stack.
   
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/463a373f-6382-42e1-852d-5e9f8d13a189" width="49%">
-  <img src="https://github.com/user-attachments/assets/830ebfa9-d717-4039-827b-0211a5a64cf4" width="49%">
-</p>
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/acfa607a-6471-4c10-84e6-5ffd2f8047e6" width="49%">
-  <img src="https://github.com/user-attachments/assets/6413e68a-6ff0-4e83-b280-676fc4aa8389" width="49%">
-</p>
+<table border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/463a373f-6382-42e1-852d-5e9f8d13a189"></td>
+    <td><img src="https://github.com/user-attachments/assets/830ebfa9-d717-4039-827b-0211a5a64cf4"></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/acfa607a-6471-4c10-84e6-5ffd2f8047e6"></td>
+    <td><img src="https://github.com/user-attachments/assets/6413e68a-6ff0-4e83-b280-676fc4aa8389"></td>
+  </tr>
+</table>
 
 ## Features
 
