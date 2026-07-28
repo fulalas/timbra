@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -148,6 +149,14 @@ class PlayerConnection(private val context: Context) {
             }
         }
 
+        override fun onPlayerError(error: PlaybackException) {
+            // Unplayable tracks are skipped service-side. If there is nothing to skip TO the queue
+            // is over, so Advance-List should roll into the next folder just as it does on a clean
+            // end — the STATE_ENDED path below never fires for an error.
+            val c = controller ?: return
+            if (appRepeat == RepeatMode.ADVANCE && !c.hasNextMediaItem()) onQueueEnded?.invoke()
+        }
+
         override fun onEvents(player: Player, events: Player.Events) {
             pushState()
             if (events.contains(Player.EVENT_TIMELINE_CHANGED) &&
@@ -157,7 +166,15 @@ class PlayerConnection(private val context: Context) {
                 saveQueue()
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-                if (player.currentMediaItemIndex > enqueueEnd) enqueueEnd = -1
+                // Retire the enqueued block once playback has moved past it, so later enqueues
+                // start a new one instead of chaining onto a spent block. Only the sequential
+                // case can read that off the timeline index: under shuffle the index jumps
+                // around at random and says nothing about progress, so the block is kept until
+                // the queue is replaced (the shuffle engine drops each enqueued song from the
+                // "play next" group as it plays — see PlaybackService.applyShuffleOrder).
+                if (!player.shuffleModeEnabled && player.currentMediaItemIndex > enqueueEnd) {
+                    enqueueEnd = -1
+                }
             }
             if (events.containsAny(
                     Player.EVENT_MEDIA_ITEM_TRANSITION,
