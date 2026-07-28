@@ -530,8 +530,30 @@ class PlayerConnection(private val context: Context) {
     private fun takeShuffleSnapshot() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) { preShuffle = null; return }
-        val ids = (0 until c.mediaItemCount).map { c.getMediaItemAt(it).mediaId.toLongOrNull() ?: -1L }
-        preShuffle = PreShuffle(ids, c.currentMediaItemIndex, c.currentPosition.coerceAtLeast(0))
+        // The playing LIST only: the enqueued block travels across mode changes on its own (see
+        // [spliceEnqueued]), so snapshotting it here too would restore those songs twice — once
+        // as plain list entries and once as the carried play-next block.
+        val plain = (0 until c.mediaItemCount).filter { !isEnqueuedAt(c, it) }
+        val ids = plain.map { c.getMediaItemAt(it).mediaId.toLongOrNull() ?: -1L }
+        // Where the current song lands once the enqueued entries are dropped.
+        val index = plain.count { it < c.currentMediaItemIndex }
+            .coerceAtMost(maxOf(0, ids.size - 1))
+        preShuffle = PreShuffle(ids, index, c.currentPosition.coerceAtLeast(0))
+    }
+
+    /** True when the timeline item at [index] was manually enqueued ("play next"). */
+    private fun isEnqueuedAt(c: MediaController, index: Int): Boolean =
+        c.getMediaItemAt(index).mediaMetadata.extras?.getBoolean(KEY_ENQUEUED, false) == true
+
+    /**
+     * Re-insert a carried-over play-next block at [at], keeping it the enqueued block. The items
+     * are the original [MediaItem]s, so they keep their metadata and enqueued flag.
+     */
+    private fun spliceEnqueued(c: MediaController, items: List<MediaItem>, at: Int) {
+        if (items.isEmpty()) { enqueueEnd = -1; return }
+        val start = at.coerceIn(0, c.mediaItemCount)
+        c.addMediaItems(start, items)
+        enqueueEnd = start + items.size - 1
     }
 
     /** Track ids captured when shuffle was enabled, so the UI can re-resolve them to [Track]s. */
@@ -552,6 +574,13 @@ class PlayerConnection(private val context: Context) {
         appShuffle = ShuffleMode.OFF
         c.shuffleModeEnabled = false
         if (tracks.isEmpty() || snap == null) { saveModes(); pushState(); return }
+        // The snapshot was taken when shuffle was turned ON, so it predates anything the user
+        // queued with "play next" during the shuffle session. Restoring it verbatim would silently
+        // drop that whole block, so lift the enqueued items off the live timeline first and splice
+        // them back in below. The playing song is excluded — the seamless path keeps it in place.
+        val carried = (0 until c.mediaItemCount)
+            .filter { it != c.currentMediaItemIndex && isEnqueuedAt(c, it) }
+            .map { c.getMediaItemAt(it) }
         val curId = c.currentMediaItem?.mediaId?.toLongOrNull()
         val pos = tracks.indexOfFirst { it.id == curId }
         if (pos >= 0) {
@@ -563,10 +592,14 @@ class PlayerConnection(private val context: Context) {
             val after = tracks.subList(pos + 1, tracks.size).map { it.toMediaItem(context) }
             if (before.isNotEmpty()) c.addMediaItems(0, before)
             if (after.isNotEmpty()) c.addMediaItems(c.mediaItemCount, after)
+            // The current song sits at `pos` again now that `before` is back in front of it.
+            spliceEnqueued(c, carried, pos + 1)
         } else {
             // Current song isn't in the original queue (played into shuffle) — restore as saved.
-            c.setMediaItems(tracks.map { it.toMediaItem(context) }, snap.index.coerceIn(0, tracks.size - 1), snap.positionMs)
+            val at = snap.index.coerceIn(0, tracks.size - 1)
+            c.setMediaItems(tracks.map { it.toMediaItem(context) }, at, snap.positionMs)
             c.prepare()
+            spliceEnqueued(c, carried, at + 1)
         }
         saveModes()
         pushState()
@@ -584,8 +617,16 @@ class PlayerConnection(private val context: Context) {
         if (tracks.isEmpty()) return
         appShuffle = ShuffleMode.ALL
         queueGeneration++
-        enqueueEnd = -1
         folderContext = null
+        // Widening the pool to the whole library must not throw away what the user explicitly
+        // queued with "play next", so lift that block off the timeline before the rebuild below
+        // strips it and splice it back afterwards. Cycling the shuffle button from Shuffle-Songs
+        // to OFF passes THROUGH here, so losing it here loses it for good — disableShuffleRestoring
+        // would then have nothing left to carry over.
+        val carried = (0 until c.mediaItemCount)
+            .filter { it != c.currentMediaItemIndex && isEnqueuedAt(c, it) }
+            .map { c.getMediaItemAt(it) }
+        enqueueEnd = -1
         val curId = c.currentMediaItem?.mediaId?.toLongOrNull()
         val idx = if (curId != null) tracks.indexOfFirst { it.id == curId } else -1
         if (idx >= 0) {
@@ -602,10 +643,14 @@ class PlayerConnection(private val context: Context) {
             val after = tracks.subList(idx + 1, tracks.size).map { it.toMediaItem(context) }
             if (before.isNotEmpty()) c.addMediaItems(0, before)
             if (after.isNotEmpty()) c.addMediaItems(c.mediaItemCount, after)
+            // The current song sits at `idx` again now that `before` is back in front of it.
+            spliceEnqueued(c, carried, idx + 1)
         } else {
-            c.setMediaItems(tracks.map { it.toMediaItem(context) }, Random.nextInt(tracks.size), 0)
+            val at = Random.nextInt(tracks.size)
+            c.setMediaItems(tracks.map { it.toMediaItem(context) }, at, 0)
             c.prepare()
             c.play()
+            spliceEnqueued(c, carried, at + 1)
         }
         // Enable shuffle now that the timeline is the full library, so the regenerated random
         // order (PlaybackService) spans all songs. The new queue's ids are persisted by the
