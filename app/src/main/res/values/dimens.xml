@@ -2,10 +2,17 @@
 <resources>
     <dimen name="pa_row_height">64dp</dimen>
     <dimen name="pa_row_thumb">48dp</dimen>
-    <dimen name="pa_deck_height">96dp</dimen>
-    <dimen name="pa_transport_big">80dp</dimen>
-    <dimen name="pa_transport_small">56dp</dimen>
     <dimen name="pa_toolbar_height">56dp</dimen>
-    <dimen name="pa_gutter">16dp</dimen>
     <dimen name="pa_category_icon">40dp</dimen>
+    <!-- Player control pane: padding and transport button sizes. values-land overrides both
+         for the two-pane landscape layout, which is the ONLY thing that differs there
+         (see layout/player_controls.xml). -->
+    <dimen name="pa_player_pad_start">16dp</dimen>
+    <dimen name="pa_player_pad_end">16dp</dimen>
+    <dimen name="pa_player_pad_top">12dp</dimen>
+    <dimen name="pa_player_pad_bottom">18dp</dimen>
+    <dimen name="pa_transport_mode">60dp</dimen>
+    <dimen name="pa_transport_step">68dp</dimen>
+    <dimen name="pa_transport_play">77dp</dimen>
+    <dimen name="pa_transport_play_margin">8dp</dimen>
 </resources>

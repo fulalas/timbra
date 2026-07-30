@@ -108,8 +108,11 @@ class RiffMpegExtractor : Extractor {
     private fun ByteArray.le32(offset: Int): Int =
         le16(offset) or (le16(offset + 2) shl 16)
 
-    /** RIFF chunk bodies are word-aligned: an odd size is followed by one pad byte. */
-    private fun Int.padded(): Int = this + (this and 1)
+    /** RIFF chunk bodies are word-aligned: an odd size is followed by one pad byte. Saturating,
+     *  because a corrupt size of exactly [Int.MAX_VALUE] would otherwise overflow to
+     *  [Int.MIN_VALUE] and hand a negative skip to the extractor input. */
+    private fun Int.padded(): Int =
+        if (this >= Int.MAX_VALUE - 1) Int.MAX_VALUE - 1 else this + (this and 1)
 
     private companion object {
         const val FORMAT_MPEG = 0x0050

@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Landscape: two-pane split. Art fills the left half; info/seek/controls
      stack in the right half so the transport doesn't spread edge-to-edge.
-     Same view IDs as layout/fragment_player.xml so the binding is shared. -->
+     The control column itself is layout/player_controls.xml, shared with portrait — so every
+     view id PlayerFragment binds is declared ONCE, and adding a control can't compile against
+     one orientation and then silently do nothing after a rotation. Only the pane geometry
+     differs here (plus the smaller transport buttons, from values-land/dimens.xml). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="horizontal"
-    android:background="@color/pa_window">
+    android:orientation="horizontal">
 
     <!-- Left pane: deck window clips the pager to the art region so a card-flip glide
          (translationY) slides WITHIN this area and never draws over the right pane. -->
@@ -25,165 +27,10 @@
     </FrameLayout>
 
     <!-- Right pane: controls, vertically centered on the pure-black window. -->
-    <LinearLayout
+    <include
+        android:id="@+id/controls"
+        layout="@layout/player_controls"
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="24dp"
-        android:paddingVertical="16dp">
-
-        <!-- Tapping the song info jumps to the track's folder. -->
-        <LinearLayout
-            android:id="@+id/info"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="?attr/selectableItemBackground"
-            android:paddingVertical="2dp">
-
-            <TextView
-                android:id="@+id/title"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="@color/pa_text_primary"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:text="@string/nothing_playing" />
-
-            <TextView
-                android:id="@+id/subtitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="@color/pa_text_secondary"
-                android:textSize="14sp"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:layout_marginTop="2dp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="10dp">
-
-            <TextView
-                android:id="@+id/position"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/pa_text_secondary"
-                android:textSize="12sp"
-                android:minWidth="44dp"
-                android:text="0:00" />
-
-            <SeekBar
-                android:id="@+id/seek"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:maxHeight="4dp"
-                android:paddingTop="14dp"
-                android:paddingBottom="14dp"
-                android:background="@null"
-                android:progressDrawable="@drawable/seek_progress"
-                android:thumb="@null"
-                android:splitTrack="false" />
-
-            <TextView
-                android:id="@+id/duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/pa_text_secondary"
-                android:textSize="12sp"
-                android:minWidth="44dp"
-                android:gravity="end"
-                android:text="0:00" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="8dp">
-
-            <!-- Repeat pinned to the far left. -->
-            <ImageButton
-                android:id="@+id/repeat"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:scaleType="fitCenter"
-                android:padding="12dp"
-                android:src="@drawable/matte_repeat_none"
-                android:contentDescription="@string/cd_repeat" />
-
-            <Space
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <ImageButton
-                android:id="@+id/prev"
-                android:layout_width="60dp"
-                android:layout_height="60dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:scaleType="fitCenter"
-                android:padding="8dp"
-                android:src="@drawable/deck_prev"
-                android:contentDescription="@string/cd_prev" />
-
-            <ImageButton
-                android:id="@+id/play"
-                android:layout_width="70dp"
-                android:layout_height="70dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:scaleType="fitCenter"
-                android:layout_marginHorizontal="6dp"
-                android:src="@drawable/deck_play"
-                android:contentDescription="@string/cd_play" />
-
-            <ImageButton
-                android:id="@+id/next"
-                android:layout_width="60dp"
-                android:layout_height="60dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:scaleType="fitCenter"
-                android:padding="8dp"
-                android:src="@drawable/deck_next"
-                android:contentDescription="@string/cd_next" />
-
-            <Space
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <!-- Shuffle pinned to the far right. -->
-            <ImageButton
-                android:id="@+id/shuffle"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:scaleType="fitCenter"
-                android:padding="12dp"
-                android:src="@drawable/matte_shuffle_none"
-                android:contentDescription="@string/cd_shuffle" />
-        </LinearLayout>
-
-        <!-- Decoded audio format (sample rate / bitrate / container), Poweramp-style. -->
-        <TextView
-            android:id="@+id/audio_info"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center"
-            android:textColor="@color/pa_text_tertiary"
-            android:textSize="11sp" />
-    </LinearLayout>
+        android:layout_weight="1" />
 </LinearLayout>

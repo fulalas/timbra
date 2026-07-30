@@ -63,9 +63,10 @@ object FolderTreeBuilder {
     }
 
     /** Child folders of [node] in the app's ONE canonical folder order — shared by the
-     *  Folders screen and the playback traversal so they can never drift apart. */
+     *  Folders screen and the playback traversal so they can never drift apart. NATURAL,
+     *  matching every track list, so "Disc 2" doesn't sort after "Disc 10". */
     fun sortedChildren(node: FolderNode): List<FolderNode> =
-        node.childFolders.sortedBy { it.name.lowercase() }
+        node.childFolders.sortedWith(compareBy(NATURAL) { it.name })
 
     /**
      * The library as one flat, depth-first list of the folders that DIRECTLY contain

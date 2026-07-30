@@ -1,7 +1,5 @@
 package com.timbra.ui.player
 
-import android.content.ContentUris
-import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.view.isVisible
@@ -10,6 +8,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.timbra.R
+import com.timbra.data.MediaRepository
 import com.timbra.databinding.ItemArtBinding
 import com.timbra.player.QueueItem
 import com.timbra.ui.ArtLoader
@@ -36,9 +35,8 @@ class ArtPagerAdapter(
         // Load via the track's content Uri (not albumId alone) so the deck finds embedded art
         // through loadThumbnail — same path the browse list uses — instead of only the legacy
         // album-art table, which misses covers on albums MediaStore didn't index there.
-        val trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, item.mediaId)
         // Pages without art show the glowing app mark instead of a generic placeholder.
-        ArtLoader.load(holder.b.pageArt, owner, trackUri, item.albumId) { has ->
+        ArtLoader.load(holder.b.pageArt, owner, MediaRepository.trackUri(item.mediaId), item.albumId) { has ->
             holder.b.pageBrand.isVisible = !has
         }
     }

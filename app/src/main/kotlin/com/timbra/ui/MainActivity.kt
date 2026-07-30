@@ -9,7 +9,6 @@ import android.provider.MediaStore
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
-import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,26 +28,28 @@ import androidx.navigation.ui.navigateUp
 import androidx.navigation.ui.setupActionBarWithNavController
 import com.timbra.R
 import com.timbra.app
+import com.timbra.folderSort
 import com.timbra.repository
 import com.timbra.data.FolderTreeBuilder
-import com.timbra.data.SortDefaults
-import com.timbra.data.comparatorFor
+import com.timbra.data.MediaRepository
 import com.timbra.data.model.FolderNode
 import com.timbra.data.model.Track
-import com.timbra.data.sortedBy
+import com.timbra.data.tracksInPlayOrder
 import com.timbra.databinding.ActivityMainBinding
+import com.timbra.player.FolderAdvance
 import com.timbra.player.PlayerConnection
 import com.timbra.player.ShuffleMode
 import com.timbra.player.UiPlayback
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     lateinit var player: PlayerConnection
         private set
+
+    private lateinit var miniTransport: TransportBinder
 
     private val navController: NavController by lazy {
         (supportFragmentManager.findFragmentById(R.id.nav_host) as NavHostFragment).navController
@@ -64,9 +65,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Overflow items that just open a screen, single-top. */
+    private val globalMenuTargets = mapOf(
+        R.id.action_search to R.id.searchFragment,
+        R.id.action_equalizer to R.id.equalizerFragment,
+    )
+
     private var onPlayerScreen = false
-    private var lastPlayback = UiPlayback()
-    private var miniUserSeeking = false
+    private var lastPlayback: UiPlayback? = null
     private var miniArtMediaId = Long.MIN_VALUE
 
     private val permLauncher =
@@ -110,8 +116,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         player = PlayerConnection(this)
-        player.onQueueEnded = { advanceToNextFolder() }
-        player.onQueueStart = { advanceToPrevFolder() }
         setupMiniPlayer()
         ensureAudioPermission()
 
@@ -139,28 +143,41 @@ class MainActivity : AppCompatActivity() {
             val byId = repository.allTracks().associateBy { it.id }
             // Keep tracks + enqueued flags aligned while dropping any tracks that no longer exist.
             val enqSet = saved.enqueuedIndices.toSet()
-            val tracks = ArrayList<com.timbra.data.model.Track>()
-            val enqueuedFlags = ArrayList<Boolean>()
+            val kept = ArrayList<Int>(saved.trackIds.size) // surviving SAVED indices, in order
+            val tracks = ArrayList<Track>(saved.trackIds.size)
+            val enqueuedFlags = ArrayList<Boolean>(saved.trackIds.size)
             saved.trackIds.forEachIndexed { i, id ->
                 val t = byId[id] ?: return@forEachIndexed
+                kept.add(i)
                 tracks.add(t)
                 enqueuedFlags.add(i in enqSet)
             }
-            if (tracks.isNotEmpty()) {
-                // Some saved tracks may be gone (deleted/rescanned); remap the index to the
-                // surviving position of the track that was actually current.
-                val currentId = saved.trackIds.getOrNull(saved.index)
-                val index = tracks.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
-                player.restore(tracks, enqueuedFlags, index, saved.positionMs,
-                    saved.shuffleOrdinal, saved.repeatOrdinal)
-                openPlayerOnce()
+            if (tracks.isEmpty()) return@launch
+            // Some saved tracks may be gone (deleted/rescanned). Land on the surviving position
+            // of the track that was current, or — when that one is itself gone — on its NEAREST
+            // surviving neighbour. Falling back to index 0 restarted the queue at the top while
+            // still applying the dead track's elapsed time to an unrelated song.
+            var index = 0
+            var bestDistance = Int.MAX_VALUE
+            kept.forEachIndexed { newIndex, savedIndex ->
+                val d = abs(savedIndex - saved.index)
+                if (d < bestDistance) { bestDistance = d; index = newIndex }
             }
+            // The position only means anything for the song it was taken from.
+            val positionMs = if (kept.getOrNull(index) == saved.index) saved.positionMs else 0L
+            player.restore(tracks, enqueuedFlags, index, positionMs,
+                saved.shuffleOrdinal, saved.repeatOrdinal)
+            openPlayerOnce()
         }
     }
 
     /** On a cold launch, open the full player once if there is a current song. */
     private fun openPlayerOnce() {
         if (app.openedPlayerThisLaunch) return
+        // Reached from a coroutine that resumed after a suspending library read, so the Activity
+        // may already be stopped: committing then throws instead of deferring. Don't burn the
+        // once-per-launch flag either — the next onStart's connect callback retries.
+        if (supportFragmentManager.isStateSaved) return
         if (navController.currentDestination?.id != R.id.libraryFragment) return
         app.openedPlayerThisLaunch = true
         navController.navigate(R.id.playerFragment, null, playerNavOptions)
@@ -175,24 +192,15 @@ class MainActivity : AppCompatActivity() {
         override fun onPrepareMenu(menu: Menu) {
             // On the equalizer screen the overflow shows only its own Reset action.
             val onEqScreen = navController.currentDestination?.id == R.id.equalizerFragment
-            menu.findItem(R.id.action_search)?.isVisible = !onEqScreen
-            menu.findItem(R.id.action_equalizer)?.isVisible = !onEqScreen
+            globalMenuTargets.keys.forEach { menu.findItem(it)?.isVisible = !onEqScreen }
         }
 
-        override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-            R.id.action_search -> {
-                if (navController.currentDestination?.id != R.id.searchFragment) {
-                    navController.navigate(R.id.searchFragment, null, navOptions { launchSingleTop = true })
-                }
-                true
+        override fun onMenuItemSelected(item: MenuItem): Boolean {
+            val target = globalMenuTargets[item.itemId] ?: return false
+            if (navController.currentDestination?.id != target) {
+                navController.navigate(target, null, navOptions { launchSingleTop = true })
             }
-            R.id.action_equalizer -> {
-                if (navController.currentDestination?.id != R.id.equalizerFragment) {
-                    navController.navigate(R.id.equalizerFragment, null, navOptions { launchSingleTop = true })
-                }
-                true
-            }
-            else -> false
+            return true
         }
     })
 
@@ -208,8 +216,16 @@ class MainActivity : AppCompatActivity() {
         if (targetDir.isBlank()) return
         lifecycleScope.launch {
             val root = repository.folderRoot()
-            val rel = if (targetDir.startsWith(root.path)) targetDir.removePrefix(root.path) else ""
+            // The trailing '/' matters: without it a directory whose name merely BEGINS with the
+            // root's name matched, and the relative path then started mid-segment — stacking
+            // folder entries that don't exist, each silently resolving to the tree root.
+            val prefix = "${root.path}/"
+            val rel = if (targetDir == root.path) ""
+            else if (targetDir.startsWith(prefix)) targetDir.removePrefix(prefix)
+            else return@launch
             val segments = rel.split('/').filter { it.isNotEmpty() }
+            // The tree read suspended; a stopped Activity can no longer take a transaction.
+            if (supportFragmentManager.isStateSaved) return@launch
             // Reset to just the Library, then push the Folders root and each ancestor.
             navController.navigate(
                 R.id.folderTreeFragment,
@@ -235,8 +251,8 @@ class MainActivity : AppCompatActivity() {
 
     /** [path] with the storage prefix stripped, for display in toolbars; null when empty. */
     fun friendlyPath(path: String): String? = path
-        .replaceFirst(Regex("^/storage/emulated/\\d+/?"), "")
-        .replaceFirst(Regex("^/storage/[^/]+/?"), "")
+        .replaceFirst(STORAGE_EMULATED, "")
+        .replaceFirst(STORAGE_VOLUME, "")
         .trim('/')
         .ifBlank { null }
 
@@ -252,6 +268,9 @@ class MainActivity : AppCompatActivity() {
     fun setMarqueeTitle(title: String) {
         supportActionBar?.title = title
         binding.toolbar.post {
+            // The post may land after the user has left the player, whose title this is — the
+            // toolbar's title view is SHARED, so writing it then would clobber the new screen's.
+            if (!onPlayerScreen) return@post
             val tv = toolbarTitleView() ?: return@post
             val marquee = toolbarMarquee?.takeIf { it.view === tv }
                 ?: TitleMarquee(tv).also { toolbarMarquee = it }
@@ -284,112 +303,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Serializes all folder navigation, so two moves can't interleave mid-computation. */
-    private val folderNavMutex = Mutex()
-
-    /**
-     * Advance-List repeat: continue with the next song-folder. Triggered when the queue
-     * ends on its own or when Next is pressed on the last song (fire-and-forget). The
-     * generation is captured HERE, at the moment of the trigger — if another navigation
-     * (e.g. a vertical swipe racing the natural queue end) replaces the queue first, this
-     * advance is superseded and must not stack a second move on top.
-     */
-    fun advanceToNextFolder() {
-        val gen = player.queueGeneration
-        lifecycleScope.launch { advanceFolder(forward = true, expectedGen = gen) }
-    }
-
-    /** Advance-List: continue with the previous song-folder (fire-and-forget). */
-    fun advanceToPrevFolder() {
-        val gen = player.queueGeneration
-        lifecycleScope.launch { advanceFolder(forward = false, expectedGen = gen) }
-    }
-
     /**
      * Advance-List walk to the next ([forward] = true) or previous song-folder — next from
-     * its first song, previous from its last (timeline walking). Returns false (a no-op) at
-     * the library's edges or when nothing is playing, so a caller tracking a pending advance
-     * can recover. Preserves play/pause: a queue that ended on its own keeps playing
-     * (playWhenReady is still set), a manual Next/swipe advance from a paused song stays paused.
+     * its first song, previous from its last (timeline walking). Used by the deck's swipe onto
+     * a phantom card, which needs to know whether anything actually moved; every other trigger
+     * (a queue that ends, Next/Previous from anywhere) is handled service-side by the same
+     * [FolderAdvance]. Returns false (a no-op) at the library's edges or when nothing is playing.
      */
     suspend fun advanceFolder(
         forward: Boolean,
-        expectedGen: Int = player.queueGeneration,
-    ): Boolean = navigateToNeighbourFolder(forward, expectedGen) { tracks ->
-        if (forward) 0 else tracks.lastIndex
-    } != null
+        expectedGen: Int = app.session.queueGeneration,
+    ): Boolean = player.moveFolder(this, forward, expectedGen) != null
 
     /**
      * Vertical-swipe folder jump: the next/previous song-folder in the flat traversal
      * order. Unlike [advanceFolder] this is a direct jump, not timeline walking, so BOTH
      * directions enter at the folder's FIRST song — or a random one when shuffle is on
-     * (the folder is the new pool). Works in any repeat mode and preserves play/pause
-     * (see [advanceFolder]). Returns the folder's name, or null on a no-op.
+     * (the folder is the new pool). Works in any repeat mode and preserves play/pause.
+     * Returns the folder's name, or null on a no-op.
      */
     suspend fun jumpToNeighbourFolder(forward: Boolean): String? =
-        navigateToNeighbourFolder(forward, player.queueGeneration) { tracks ->
-            if (player.currentShuffle() != ShuffleMode.OFF) tracks.indices.random() else 0
+        player.moveFolder(this, forward, app.session.queueGeneration) { tracks ->
+            if (player.state.value.shuffle != ShuffleMode.OFF) tracks.indices.random() else 0
         }?.name
-
-    /**
-     * The one folder-navigation path: move to the neighbouring song-folder and load its
-     * tracks starting at [startOf]. Serialized by [folderNavMutex], and aborted when the
-     * queue was already replaced since [expectedGen] was captured — the racing navigation
-     * (auto-advance vs. swipe) that got there first stands; this one is superseded.
-     * Returns the folder navigated to, or null on a no-op.
-     */
-    private suspend fun navigateToNeighbourFolder(
-        forward: Boolean,
-        expectedGen: Int,
-        startOf: (List<Track>) -> Int,
-    ): FolderNode? = folderNavMutex.withLock {
-        if (expectedGen != player.queueGeneration) return null
-        val (prev, next) = neighbourSongFolders()
-        val target = (if (forward) next else prev) ?: return null
-        val tracks = target.tracks.sortedBy(SortDefaults.FOLDER_SONGS)
-        if (tracks.isEmpty()) return null
-        // play() can refuse (controller released mid-flight, e.g. backgrounded): nothing
-        // changed, so report the no-op instead of advancing the anchor/toast past reality.
-        if (!player.play(tracks, startOf(tracks), play = false, folderContext = target.path)) {
-            return null
-        }
-        // Shuffle-All's pool was the whole library; it is now this folder — which is what
-        // Shuffle-Songs means. Keeps the mode icon truthful about the actual pool.
-        if (player.currentShuffle() == ShuffleMode.ALL) player.setShuffle(ShuffleMode.CURRENT)
-        target
-    }
 
     /**
      * The (previous, next) song-folders around the one being played, in the flat traversal
      * order ([MediaRepository.songFolders]); nulls at the library's edges or when nothing
      * is playing. Anchored on the folder a jump/advance last loaded
-     * ([PlayerConnection.folderContext]); when that is absent — or STALE, i.e. no longer in
-     * the rebuilt tree after a rescan — it falls back to the playing file's own directory,
-     * which always directly contains that file and so is itself a song-folder entry.
+     * ([com.timbra.player.PlaybackSession.folderContext]); when that is absent — or STALE, i.e.
+     * no longer in the rebuilt tree after a rescan — it falls back to the playing file's own
+     * directory, which always directly contains that file and so is itself a song-folder entry.
      */
     private suspend fun neighbourSongFolders(): Pair<FolderNode?, FolderNode?> {
         val filePath = player.state.value.filePath
         if (filePath.isBlank()) return null to null
-        // Prefer the folder a jump/advance last loaded; fall back to the playing file's own
-        // directory (always a song-folder entry) when it's absent or stale after a rescan.
         return FolderTreeBuilder.neighbourFolders(
             repository.songFolders(),
-            player.folderContext,
+            app.session.folderContext,
             filePath.substringBeforeLast('/', ""),
         )
     }
 
     /**
      * The neighbour-folder songs used for Advance-List phantom art, from one traversal
-     * lookup: (previous folder's last song, next folder's first song), either null if
-     * absent. Same traversal as the advances themselves, so the phantom cards preview the
-     * songs those swipes actually lead to. Uses minWith/maxWith rather than sorting each
-     * whole folder just to read one end.
+     * lookup: (previous folder's last song, next folder's first song), either null if absent.
+     *
+     * Taken from the ends of the SAME list the advance itself builds. minWith/maxWith over the
+     * unsorted folder returned the FIRST of a comparator tie while the advance takes the LAST
+     * (stable sort) — and naturalCompare reports 0 for names differing only by leading zeros or
+     * case — so the previewed card could show one file's art and the swipe play another's.
      */
     suspend fun neighbourFolderSongs(): Pair<Track?, Track?> {
-        val cmp = comparatorFor(SortDefaults.FOLDER_SONGS)
         val (prev, next) = neighbourSongFolders()
-        return prev?.tracks?.maxWithOrNull(cmp) to next?.tracks?.minWithOrNull(cmp)
+        val order = folderSort.sortOrder
+        return prev?.tracksInPlayOrder(order)?.lastOrNull() to
+            next?.tracksInPlayOrder(order)?.firstOrNull()
     }
 
     /** Delete files from storage (system shows its own confirmation on API 30+). */
@@ -431,45 +400,38 @@ class MainActivity : AppCompatActivity() {
         miniPlay.setOnClickListener { player.togglePlayPause() }
         miniNext.setOnClickListener { player.next() }
         miniPrev.setOnClickListener { player.previous() }
-        // Drag the mini timeline to seek.
-        miniSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser) miniPosition.text = Format.clock(progress.toLong())
-            }
-            override fun onStartTrackingTouch(sb: SeekBar) { miniUserSeeking = true }
-            override fun onStopTrackingTouch(sb: SeekBar) {
-                miniUserSeeking = false
-                player.seekTo(sb.progress.toLong())
-            }
-        })
+        miniTransport = TransportBinder(
+            seek = miniSeek,
+            position = miniPosition,
+            duration = miniDuration,
+            play = miniPlay,
+        ) { player.seekTo(it) }
     }
 
     private fun updateMiniVisibility() {
-        binding.miniPlayer.root.isVisible = lastPlayback.hasItem && !onPlayerScreen
+        binding.miniPlayer.root.isVisible = lastPlayback?.hasItem == true && !onPlayerScreen
     }
 
     private fun bindMiniPlayer(s: UiPlayback) = with(binding.miniPlayer) {
+        val prev = lastPlayback
         lastPlayback = s
         updateMiniVisibility()
         if (!s.hasItem) { miniArtMediaId = Long.MIN_VALUE; return }
-        miniTitle.text = s.title.ifBlank { getString(R.string.nothing_playing) }
-        miniSubtitle.text = s.artist
-        miniPlay.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)
-        miniSeek.max = s.durationMs.toInt().coerceAtLeast(1)
-        miniDuration.text = Format.clock(s.durationMs)
-        if (!miniUserSeeking) {
-            miniSeek.progress = s.positionMs.toInt().coerceIn(0, miniSeek.max)
-            miniPosition.text = Format.clock(s.positionMs)
+        // Most emissions are 500ms position ticks; touch only the views whose source changed.
+        // A bind after the no-item state re-sets everything.
+        val fresh = prev == null || !prev.hasItem
+        if (fresh || s.title != prev.title || s.filePath != prev.filePath || s.artist != prev.artist) {
+            miniTitle.text = s.displayTitle
+            miniSubtitle.text = s.artist
         }
+        miniTransport.bind(s, prev?.takeIf { it.hasItem })
         // Only (re)load the cover when the track actually changes, otherwise it flickers
         // on every 500ms position tick. No art → no thumbnail (no generic placeholder).
         if (s.mediaId != miniArtMediaId) {
             miniArtMediaId = s.mediaId
             // Load via the track's content Uri so embedded-only covers are found too (and keyed
             // per TRACK — same album, different files, different embedded art is possible).
-            val uri = if (s.mediaId >= 0) {
-                android.content.ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, s.mediaId)
-            } else null
+            val uri = if (s.mediaId >= 0) MediaRepository.trackUri(s.mediaId) else null
             ArtLoader.load(miniArt, this@MainActivity, uri, s.albumId) { miniArt.isVisible = it }
         }
     }
@@ -482,16 +444,21 @@ class MainActivity : AppCompatActivity() {
         else Manifest.permission.READ_EXTERNAL_STORAGE
 
     private fun ensureAudioPermission() {
-        val needed = buildList {
-            if (ContextCompat.checkSelfPermission(this@MainActivity, audioPermission())
-                != PackageManager.PERMISSION_GRANTED
-            ) add(audioPermission())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) add(Manifest.permission.POST_NOTIFICATIONS)
+        val wanted = buildList {
+            add(audioPermission())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        val needed = wanted.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isEmpty()) app.refreshLibrary() else permLauncher.launch(needed.toTypedArray())
     }
 
+    private companion object {
+        /** Compiled once: [friendlyPath] runs on every navigation and every song change. */
+        val STORAGE_EMULATED = Regex("^/storage/emulated/\\d+/?")
+        val STORAGE_VOLUME = Regex("^/storage/[^/]+/?")
+    }
 }

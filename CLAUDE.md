@@ -15,7 +15,7 @@
 Single source of truth: `app/build.gradle.kts` → `defaultConfig`.
 1. **Increment `versionCode` by 1** and **bump `versionName`** (semver: patch for
    fixes, minor for features) before building.
-2. The version is surfaced **in the app** (Library screen toolbar subtitle, via
+2. The version is surfaced **in the app** (Library screen → overflow → About, via
    `BuildConfig.VERSION_NAME`) and **in the APK filename**.
 
 ## Build
@@ -65,11 +65,12 @@ Confirm `arm64-v8a` + the FFmpeg libs (`libavcodec`, `libmedia3ext`, `libswresam
   from file paths, no all-files permission), `Sorting` (+ `SortDefaults`: folders =
   hierarchy / by filename).
 - `ui/` — `MainActivity` (toolbar + nav host + mini-player), `library/`, `folders/`,
-  `list/` (shared `LibraryListAdapter`), `player/`, `dialogs/`, `ArtLoader`, `Format`.
+  `list/` (shared `LibraryListAdapter`), `player/`, `queue/`, `search/`, `eq/`,
+  `dialogs/`, `ArtLoader`, `Format`, `Transport`, `Marquee`, `ItemActions`, `Ext`.
 
 ## Deferred (not implemented yet)
 
-Settings screen, EQ/tone, widgets, lyrics, theme switching, SAF filesystem browsing.
+Settings screen, widgets, lyrics, theme switching, SAF filesystem browsing.
 Playlists & per-track genres depend on legacy MediaStore tables and may be sparse on
 Android 11+.
 

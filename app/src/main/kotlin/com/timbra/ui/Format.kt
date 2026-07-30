@@ -3,15 +3,27 @@ package com.timbra.ui
 import java.util.Locale
 
 object Format {
-    /** Milliseconds -> "m:ss" or "h:mm:ss". */
+    /**
+     * Milliseconds -> "m:ss" or "h:mm:ss". Built by hand rather than with String.format: this
+     * runs on every position tick of both players, on every seek-bar drag callback, and once
+     * per row bind while a list is flung — and String.format re-parses its pattern and
+     * allocates a Formatter on each call.
+     */
     fun clock(ms: Long): String {
         if (ms <= 0) return "0:00"
         val totalSec = ms / 1000
         val h = totalSec / 3600
         val m = (totalSec % 3600) / 60
         val s = totalSec % 60
-        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s)
-        else String.format(Locale.US, "%d:%02d", m, s)
+        return buildString(8) {
+            if (h > 0) {
+                append(h).append(':')
+                if (m < 10) append('0')
+            }
+            append(m).append(':')
+            if (s < 10) append('0')
+            append(s)
+        }
     }
 
     /** "artist  •  album", dropping blank parts. */
@@ -28,7 +40,10 @@ object Format {
             )
         }
         if (bitrateBps > 0) parts.add("${bitrateBps / 1000}Kbps")
-        filePath.substringAfterLast('.', "").lowercase(Locale.US)
+        // Extension of the FILE NAME, not of the whole path: applied to the path, an
+        // extension-less file under a dotted directory (".../Vol.2/track01") yielded a
+        // "container" containing path separators ("2/track01").
+        filePath.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.US)
             .takeIf { it.isNotBlank() }?.let { parts.add(it) }
         return parts.joinToString("  ")
     }

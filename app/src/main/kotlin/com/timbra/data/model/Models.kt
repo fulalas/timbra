@@ -12,12 +12,20 @@ data class Track(
     val albumId: Long,
     val durationMs: Long,
     val trackNo: Int,
+    /** Disc number (1-based) when the tags carry one, else 0 — the primary key of the album
+     *  order, so a multi-disc album doesn't interleave its discs. */
+    val discNo: Int,
     val dateAddedSec: Long,
     /** Absolute file path (or best available), used for folder-tree grouping and filename sort. */
     val path: String,
+    /**
+     * Derived once at construction, NOT a computed getter: the filename comparator selects on
+     * it and `compareBy` evaluates the selector on both operands of every comparison, so a
+     * getter allocated a fresh substring O(n log n) times per sort (on the main thread for
+     * folder advances). Defaulted from [path], so callers never pass it.
+     */
+    val fileName: String = path.substringAfterLast('/'),
 ) {
-    val fileName: String get() = path.substringAfterLast('/')
-
     /** Title, falling back to the file name when tags are missing. */
     val displayTitle: String get() = title.ifBlank { fileName }
 }

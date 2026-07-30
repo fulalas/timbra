@@ -1,6 +1,7 @@
 package com.timbra.ui
 
 import android.content.ContentUris
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
@@ -22,16 +23,19 @@ import kotlinx.coroutines.withContext
  * main thread and caches per TRACK when a track Uri is available (art can be embedded
  * per-file: two tracks sharing an albumId may carry different covers), per album
  * otherwise. Guards against RecyclerView view reuse via a tag.
+ *
+ * Decodes are bounded to the size the target view actually renders at, and the cache is keyed by
+ * that size: one shared 512px target served both the full-screen deck and the 48dp row
+ * thumbnails, so every list row cached a ~1 MB bitmap it drew at a twelfth of the size and a
+ * ~12 MB budget held about a dozen covers instead of ~150.
  */
 object ArtLoader {
 
-    /** Target edge for decoded art; matches the loadThumbnail cap so every decode path is
-     *  bounded the same way. */
+    /** Decode target for the full-screen art deck, and the ceiling for anything else. */
     private const val MAX_EDGE = 512
 
-    // Budget the cache in KB (~1/8 of the heap); sizeOf returns KB. A single 512² bitmap
-    // is ~1 MB, so a fixed tiny ceiling would evict everything immediately. Keys are the
-    // namespaced strings built in [load] ("t<trackId>" / "a<albumId>").
+    // Budget the cache in KB (~1/8 of the heap); sizeOf returns KB. Keys are the namespaced
+    // strings built in [load] ("t<trackId>@<edge>" / "a<albumId>@<edge>").
     private val cache = object : LruCache<String, Bitmap>(
         (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(4096),
     ) {
@@ -46,35 +50,51 @@ object ArtLoader {
     private val trackMisses = java.util.Collections.synchronizedSet(HashSet<Long>())
 
     /**
+     * Bumped by [invalidate]. A decode that started before a rescan must publish NOTHING — it
+     * cannot be cancelled, and its trailing `cache.put` / miss-record used to land after
+     * evictAll() and reinstate the pre-rescan cover (or permanently blacklist art that had just
+     * been added), which is exactly what invalidate() exists to prevent.
+     */
+    @Volatile
+    private var generation = 0
+
+    /**
      * Drop the negative-result set and cached bitmaps. Called on library rescans — without
      * this, an album whose art was added after a miss would show the placeholder until the
      * process died (and stale art would survive re-tagging).
      */
     fun invalidate() {
+        generation++
         misses.clear()
         trackMisses.clear()
         cache.evictAll()
     }
 
     /**
-     * Load the track's art into [view]. There is deliberately NO placeholder image
-     * (Poweramp-style): [onArt] reports whether art exists so the caller can hide the
-     * view or show a brand mark instead. It may fire twice — false immediately (view
-     * cleared, nothing decoded yet), then true if the async decode lands (tag-guarded
-     * against view reuse).
+     * Load the track's art into [view], decoded no larger than [targetEdgePx] (by default the
+     * view's own fixed size, falling back to [MAX_EDGE] for a view that fills its space).
+     *
+     * There is deliberately NO placeholder image (Poweramp-style): [onArt] reports whether art
+     * exists so the caller can hide the view or show a brand mark instead. It may fire twice —
+     * false immediately (view cleared, nothing decoded yet), then true if the async decode lands
+     * (tag-guarded against view reuse).
      */
     fun load(
         view: ImageView,
         owner: LifecycleOwner,
         trackUri: Uri?,
         albumId: Long,
+        targetEdgePx: Int = autoTarget(view),
         onArt: (Boolean) -> Unit = {},
     ) {
+        val target = targetEdgePx.coerceIn(1, MAX_EDGE)
         val trackId = trackUri?.let { runCatching { ContentUris.parseId(it) }.getOrNull() }
         // Cache/reuse key: per-track when the Uri identifies one (embedded art differs between
         // files of the same album), album-level otherwise. Namespaced — track and album ids
-        // live in different MediaStore tables and would collide as raw longs.
-        val key = if (trackId != null) "t$trackId" else "a$albumId"
+        // live in different MediaStore tables and would collide as raw longs — and suffixed with
+        // the decode size, so the deck's 512px and a list's 144px coexist instead of one
+        // evicting the other.
+        val key = (if (trackId != null) "t$trackId" else "a$albumId") + "@$target"
         view.setTag(R.id.art_tag, key)
         cache.get(key)?.let { view.setImageBitmap(it); onArt(true); return }
         view.setImageDrawable(null)
@@ -84,8 +104,14 @@ object ArtLoader {
         if (trackId != null) { if (trackId in trackMisses) return }
         else if (albumId >= 0 && albumId in misses) return
 
+        // Read the Context here, on the main thread — the decode ran on Dispatchers.IO and
+        // dereferenced the View to get it, which is View state accessed off the main thread.
+        val context = view.context.applicationContext
+        val startedAt = generation
         owner.lifecycleScope.launch {
-            val bmp = withContext(Dispatchers.IO) { decode(view, trackUri, albumId) }
+            val bmp = withContext(Dispatchers.IO) { decode(context, trackUri, albumId, target) }
+            // A rescan happened while we were decoding: this result describes the old library.
+            if (generation != startedAt) return@launch
             if (bmp != null) {
                 cache.put(key, bmp)
                 if (view.getTag(R.id.art_tag) == key) {
@@ -100,6 +126,13 @@ object ArtLoader {
         }
     }
 
+    /** The view's own fixed size when it has one (list thumbnails), else the full-deck cap. */
+    private fun autoTarget(view: ImageView): Int {
+        val lp = view.layoutParams
+        val edge = maxOf(lp?.width ?: 0, lp?.height ?: 0)
+        return if (edge > 0) edge else MAX_EDGE
+    }
+
     /**
      * Drop a view's art and disown any in-flight decode (retag so a late callback's tag-guard
      * fails). Call from `onViewRecycled` so a pooled ImageView never carries a previous song's
@@ -110,20 +143,23 @@ object ArtLoader {
         view.setImageDrawable(null)
     }
 
-    private fun decode(view: ImageView, trackUri: Uri?, albumId: Long): Bitmap? {
-        val resolver = view.context.contentResolver
+    private fun decode(context: Context, trackUri: Uri?, albumId: Long, target: Int): Bitmap? {
+        val resolver = context.contentResolver
         // API 29+: reliable thumbnail from the track content Uri.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && trackUri != null) {
             runCatching {
-                return resolver.loadThumbnail(trackUri, Size(MAX_EDGE, MAX_EDGE), null)
+                return resolver.loadThumbnail(trackUri, Size(target, target), null)
             }
         }
-        // Fallback: legacy album-art Uri stream.
+        // Fallback: legacy album-art Uri stream. This is the ONLY path on API 24-28, and it is
+        // also where an API 29+ loadThumbnail failure lands (common — MediaStore never
+        // thumbnailed plenty of files), so it must be sampled: decoding straight from the stream
+        // produced multi-megabyte bitmaps for a 48dp row and risked OOM on large covers.
         if (albumId >= 0) {
             runCatching {
-                resolver.openInputStream(MediaRepository.albumArtUri(albumId))?.use {
-                    return BitmapFactory.decodeStream(it)
-                }
+                val bytes = resolver.openInputStream(MediaRepository.albumArtUri(albumId))
+                    ?.use { it.readBytes() }
+                if (bytes != null && bytes.isNotEmpty()) return decodeSampled(bytes, target)
             }
         }
         // Last resort: read the picture embedded in the file's own tags. MediaStore's thumbnail
@@ -133,8 +169,8 @@ object ArtLoader {
         if (trackUri != null) {
             val mmr = MediaMetadataRetriever()
             try {
-                mmr.setDataSource(view.context, trackUri)
-                mmr.embeddedPicture?.let { return decodeSampled(it) }
+                mmr.setDataSource(context, trackUri)
+                mmr.embeddedPicture?.let { return decodeSampled(it, target) }
             } catch (_: Throwable) {
                 // Unreadable file / no picture — fall through to no-art.
             } finally {
@@ -144,17 +180,25 @@ object ArtLoader {
         return null
     }
 
-    /** Decode an embedded picture bounded to ~[MAX_EDGE], matching the loadThumbnail cap.
-     *  Ripped libraries embed 3000² covers; decoding those full-size (~36 MB ARGB) would
-     *  blow past the whole cache budget and thrash every visible page out of it. */
-    private fun decodeSampled(pic: ByteArray): Bitmap? {
+    /**
+     * Decode [pic] with neither edge above [target].
+     *
+     * The loop tests the UN-halved dimension, so the result is bounded BY the target rather than
+     * merely above it: testing the already-halved one stopped a step early, letting a 1023² cover
+     * decode full-size (~4.2 MB) against a budget sized for ~1 MB — enough for one bitmap to
+     * trim the whole cache on put.
+     */
+    private fun decodeSampled(pic: ByteArray, target: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(pic, 0, pic.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
-        while (bounds.outWidth / (sample * 2) >= MAX_EDGE || bounds.outHeight / (sample * 2) >= MAX_EDGE) {
+        while (bounds.outWidth / sample > target || bounds.outHeight / sample > target) {
             sample *= 2
         }
-        return BitmapFactory.decodeByteArray(pic, 0, pic.size, BitmapFactory.Options().apply { inSampleSize = sample })
+        return BitmapFactory.decodeByteArray(
+            pic, 0, pic.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        )
     }
 }

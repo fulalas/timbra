@@ -1,6 +1,7 @@
 package com.timbra.player
 
 import android.content.Context
+import androidx.media3.common.Player
 
 /**
  * Persists the current queue (as track ids), the playing index, position and play
@@ -20,21 +21,70 @@ class PlaybackStateStore(context: Context) {
         val repeatOrdinal: Int,
     )
 
-    /** The queue only changes when the timeline changes — write the (potentially large) id list rarely. */
-    fun saveQueue(trackIds: List<Long>, enqueuedIndices: List<Int>) {
+    /**
+     * The queue only changes when the timeline changes — write the (potentially large) id list
+     * rarely.
+     *
+     * The index and position go in the SAME transaction, because they only mean anything
+     * relative to this id list: they used to be written by a different event, so a timeline
+     * rebuild that fired only EVENT_TIMELINE_CHANGED (turning shuffle off, say) left the saved
+     * index pointing into the previous queue, and a process death in that window restored the
+     * wrong song at a meaningless position.
+     */
+    fun saveQueue(trackIds: List<Long>, enqueuedIndices: List<Int>, index: Int, positionMs: Long) {
         prefs.edit()
-            .putString(KEY_IDS, trackIds.joinToString(","))
-            .putString(KEY_ENQ, enqueuedIndices.joinToString(","))
+            .putString(KEY_IDS, joinLongs(trackIds))
+            .putString(KEY_ENQ, joinInts(enqueuedIndices))
+            .putInt(KEY_INDEX, index)
+            .putLong(KEY_POS, positionMs)
             .apply()
     }
 
+    /**
+     * Bumps [modesRevision] so a reader can tell "nobody has touched these since I last wrote
+     * them" from "someone else did" — the detached service narrows Shuffle-All when it advances
+     * a folder, and a retained PlayerConnection has to notice.
+     */
     fun saveModes(shuffleOrdinal: Int, repeatOrdinal: Int) {
-        prefs.edit().putInt(KEY_SHUFFLE, shuffleOrdinal).putInt(KEY_REPEAT, repeatOrdinal).apply()
+        prefs.edit()
+            .putInt(KEY_SHUFFLE, shuffleOrdinal)
+            .putInt(KEY_REPEAT, repeatOrdinal)
+            .putInt(KEY_MODES_REV, prefs.getInt(KEY_MODES_REV, 0) + 1)
+            .apply()
+    }
+
+    /** Monotonic counter of mode writes (see [saveModes]). */
+    fun modesRevision(): Int = prefs.getInt(KEY_MODES_REV, 0)
+
+    // Pre-sized joins: these run on the main thread (from a Player.Listener callback), and a
+    // 10k-track Shuffle-All queue grows an unsized StringBuilder through ~12 array copies.
+    private fun joinLongs(values: List<Long>): String {
+        val sb = StringBuilder(values.size * 8)
+        for (i in values.indices) {
+            if (i > 0) sb.append(',')
+            sb.append(values[i])
+        }
+        return sb.toString()
+    }
+
+    private fun joinInts(values: List<Int>): String {
+        val sb = StringBuilder(values.size * 5)
+        for (i in values.indices) {
+            if (i > 0) sb.append(',')
+            sb.append(values[i])
+        }
+        return sb.toString()
     }
 
     /** Cheap, frequent write on transitions / play-pause / stop. */
-    fun savePosition(index: Int, positionMs: Long) {
+    private fun savePosition(index: Int, positionMs: Long) {
         prefs.edit().putInt(KEY_INDEX, index).putLong(KEY_POS, positionMs).apply()
+    }
+
+    /** Checkpoint [player]'s current index + position; a no-op on an empty timeline. */
+    fun checkpoint(player: Player) {
+        if (player.mediaItemCount == 0) return
+        savePosition(player.currentMediaItemIndex, player.currentPosition.coerceAtLeast(0))
     }
 
     fun load(): Saved? {
@@ -70,5 +120,6 @@ class PlaybackStateStore(context: Context) {
         const val KEY_POS = "position"
         const val KEY_SHUFFLE = "shuffle"
         const val KEY_REPEAT = "repeat"
+        const val KEY_MODES_REV = "modes_revision"
     }
 }

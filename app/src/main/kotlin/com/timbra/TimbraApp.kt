@@ -2,8 +2,11 @@ package com.timbra
 
 import android.app.Application
 import android.content.Context
+import com.timbra.data.FolderSort
 import com.timbra.data.MediaRepository
 import com.timbra.player.EqSettings
+import com.timbra.player.PlaybackSession
+import com.timbra.player.PlaybackStateStore
 import com.timbra.ui.ArtLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -13,22 +16,22 @@ class TimbraApp : Application() {
     /** Persisted equalizer state, shared by the equalizer screen and (indirectly) the service. */
     val eqSettings: EqSettings by lazy { EqSettings(this) }
 
+    /** Persisted queue/position/modes, shared by the UI connection and the service — they use
+     *  it as their common channel, so they must not hold separate instances. */
+    val playbackStore: PlaybackStateStore by lazy { PlaybackStateStore(this) }
+
+    /** Queue facts shared by the UI connection and the service (see [PlaybackSession]). */
+    val session = PlaybackSession()
+
+    /** The folder browser's persisted order, which is also the order folder QUEUES are built
+     *  in — see [FolderSort]. */
+    val folderSort: FolderSort by lazy { FolderSort(this) }
+
     /** Bumped whenever the library becomes readable / is rescanned, so screens reload. */
     val libraryEpoch = MutableStateFlow(0)
 
     /** True once the full player has been auto-opened this process launch. */
     var openedPlayerThisLaunch = false
-
-    /**
-     * True while the UI's [com.timbra.player.PlayerConnection] has a live controller (set on
-     * connect, cleared on release). [com.timbra.player.PlaybackService] uses it to decide who
-     * owns the automatic Advance-List folder advance at the end of a queue: the UI when it's
-     * attached (rich deck/phantom/folderContext handling), the service when it isn't (the app
-     * is backgrounded / the Activity was destroyed) — so the last song of a folder still rolls
-     * into the next one with the screen off, and the two never double-advance.
-     */
-    @Volatile
-    var uiControllerAttached = false
 
     fun refreshLibrary() {
         repository.invalidate()
@@ -45,3 +48,6 @@ val Context.repository: MediaRepository
 
 val Context.eqSettings: EqSettings
     get() = app.eqSettings
+
+val Context.folderSort: FolderSort
+    get() = app.folderSort

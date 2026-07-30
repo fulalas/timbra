@@ -3,10 +3,57 @@ package com.timbra.ui
 import android.view.View
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.timbra.R
+import com.timbra.app
+import com.timbra.player.PlayerConnection
+import com.timbra.ui.list.LibraryListAdapter
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+/** The activity-owned [PlayerConnection]; every screen talks to the player through it. */
+val Fragment.player: PlayerConnection
+    get() = (requireActivity() as MainActivity).player
+
+/** Keep [adapter]'s now-playing highlight on the current song for this view's lifetime. */
+fun Fragment.trackNowPlaying(adapter: LibraryListAdapter) {
+    viewLifecycleOwner.lifecycleScope.launch {
+        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            player.state.map { it.mediaId }.distinctUntilChanged()
+                .collect { adapter.currentMediaId = it }
+        }
+    }
+}
+
+/**
+ * Run [onChange] once for this view, and again whenever the library is rescanned — the reload
+ * wiring every browse screen needs (it was duplicated verbatim, guard and comment included).
+ *
+ * The epoch guard matters: the collector restarts on every foreground return and the StateFlow
+ * replays its value, so without it the whole list was re-sorted and rebound on every app switch.
+ * It is scoped to the VIEW, so a screen coming back through the back stack repopulates its fresh
+ * adapter instead of staying empty.
+ */
+fun Fragment.reloadOnLibraryChange(onChange: () -> Unit) {
+    var loadedEpoch = -1
+    viewLifecycleOwner.lifecycleScope.launch {
+        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            requireContext().app.libraryEpoch.collect { epoch ->
+                if (epoch != loadedEpoch) {
+                    loadedEpoch = epoch
+                    onChange()
+                }
+            }
+        }
+    }
+}
 
 /** Standard vertical list wiring used by every browse screen. */
 fun RecyclerView.linearWithDivider(divider: Boolean = true) {

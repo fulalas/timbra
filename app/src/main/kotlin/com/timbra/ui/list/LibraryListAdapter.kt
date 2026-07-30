@@ -5,6 +5,8 @@ import android.view.ViewGroup
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.lifecycle.LifecycleOwner
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.timbra.R
 import com.timbra.data.model.FolderNode
@@ -29,15 +31,23 @@ sealed interface ListItem {
     ) : ListItem
 }
 
+/**
+ * The shared browse-list adapter.
+ *
+ * Backed by [ListAdapter]/[DiffUtil] rather than `notifyDataSetChanged()`: submit() is called on
+ * every debounced keystroke in Search and on every sort/View-As change and rescan elsewhere, and a
+ * blanket invalidation rebound every visible row from scratch — three setText, a duration format,
+ * a subtitle join, an art load and two fresh listeners each — and dropped the scroll position even
+ * when most of the list was unchanged. [ListItem] is a data-class hierarchy, so equality is free.
+ */
 class LibraryListAdapter(
     private val owner: LifecycleOwner,
     private val onTrack: (Int) -> Unit,
     private val onFolder: (FolderNode) -> Unit = {},
     private val onNav: (ListItem.NavRow) -> Unit = {},
     private val onLongItem: (ListItem) -> Unit = {},
-) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+) : ListAdapter<ListItem, RecyclerView.ViewHolder>(DIFF) {
 
-    private var items: List<ListItem> = emptyList()
     var currentMediaId: Long = -1L
         set(value) {
             if (field == value) return
@@ -50,18 +60,13 @@ class LibraryListAdapter(
 
     private fun notifyTrackChanged(id: Long) {
         if (id < 0) return
-        val pos = items.indexOfFirst { it is ListItem.TrackRow && it.track.id == id }
+        val pos = currentList.indexOfFirst { it is ListItem.TrackRow && it.track.id == id }
         if (pos >= 0) notifyItemChanged(pos)
     }
 
-    fun submit(list: List<ListItem>) {
-        items = list
-        notifyDataSetChanged()
-    }
+    fun submit(list: List<ListItem>) = submitList(list)
 
-    override fun getItemCount() = items.size
-
-    override fun getItemViewType(position: Int) = when (items[position]) {
+    override fun getItemViewType(position: Int) = when (getItem(position)) {
         is ListItem.TrackRow -> TYPE_TRACK
         else -> TYPE_ROW
     }
@@ -75,7 +80,7 @@ class LibraryListAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        when (val item = items[position]) {
+        when (val item = getItem(position)) {
             is ListItem.TrackRow -> (holder as TrackVH).bind(item)
             is ListItem.FolderRow -> (holder as RowVH).bindFolder(item)
             is ListItem.NavRow -> (holder as RowVH).bindNav(item)
@@ -127,5 +132,19 @@ class LibraryListAdapter(
     companion object {
         private const val TYPE_TRACK = 0
         private const val TYPE_ROW = 1
+
+        private val DIFF = object : DiffUtil.ItemCallback<ListItem>() {
+            override fun areItemsTheSame(old: ListItem, new: ListItem): Boolean = when {
+                old is ListItem.TrackRow && new is ListItem.TrackRow ->
+                    old.track.id == new.track.id
+                old is ListItem.FolderRow && new is ListItem.FolderRow ->
+                    old.node.path == new.node.path
+                old is ListItem.NavRow && new is ListItem.NavRow ->
+                    old.kind == new.kind && old.id == new.id
+                else -> false
+            }
+
+            override fun areContentsTheSame(old: ListItem, new: ListItem): Boolean = old == new
+        }
     }
 }

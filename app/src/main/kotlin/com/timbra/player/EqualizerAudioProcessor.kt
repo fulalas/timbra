@@ -10,6 +10,7 @@ import java.nio.ByteOrder
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.pow
+import kotlin.math.round
 import kotlin.math.sin
 
 /**
@@ -19,36 +20,73 @@ import kotlin.math.sin
  * some HALs). Each band is a biquad peaking filter (RBJ cookbook) cascaded per channel.
  *
  * Only 16-bit PCM is handled; other encodings pass through untouched (the processor reports
- * itself inactive). Gains/enabled are updated from the binder thread and read on the audio
- * thread via @Volatile; per-sample filter state is touched only on the audio thread.
+ * itself inactive).
+ *
+ * Threading: the whole tunable state is one immutable [Tuning] published in a single volatile
+ * store (see [tuning]), and every rebuild happens under [buildLock] — the UI thread (via
+ * [update]) and the playback thread (via [onConfigure]) both rebuild, and two independent
+ * volatile fields could otherwise be read as a mismatched pair or published out of order.
+ * Per-sample filter state is touched only on the audio thread.
  */
 @UnstableApi
 class EqualizerAudioProcessor : BaseAudioProcessor() {
 
-    @Volatile private var enabled = false
-    @Volatile private var gainsDb = IntArray(EqSettings.BAND_COUNT)
-    /** Per-band normalized coeffs [b0, b1, b2, a1, a2]; rebuilt when gains/format change. */
-    @Volatile private var coeffs: Array<DoubleArray> = identityCoeffs()
+    /**
+     * An atomically-published snapshot of everything the audio thread needs.
+     *
+     * [generation] identifies the transfer function: the audio thread drops its filter memory
+     * whenever it changes, because feeding x1/x2/y1/y2 from one response into a different one
+     * emits a step transient (a fader tap from +15 dB to -15 dB used to click, clipping against
+     * the output clamp), and because the bypass branch freezes that memory — so re-enabling
+     * would otherwise resume the biquads with sample history from an arbitrarily earlier moment.
+     */
+    private class Tuning(
+        val enabled: Boolean,
+        /** Per-band normalized coeffs [b0, b1, b2, a1, a2]. */
+        val coeffs: Array<DoubleArray>,
+        /**
+         * Indices of the bands whose coeffs are NOT the identity, i.e. the only ones worth
+         * running. Identity biquads output their input exactly and carry no state worth
+         * preserving, so skipping them is lossless — and this loop runs per SAMPLE on the audio
+         * thread, where a typical 2-3-slider curve would otherwise pay for all 7 bands.
+         */
+        val activeBands: IntArray,
+        val generation: Int,
+    )
 
-    @Volatile private var sampleRate = 0
+    @Volatile private var tuning = Tuning(false, identityCoeffs(), IntArray(0), 0)
+
+    /** Guards the rebuild inputs below and serializes publishing. */
+    private val buildLock = Any()
+
+    // --- All guarded by [buildLock] ---
+    private var enabledInput = false
+    private var gainsInput = IntArray(EqSettings.BAND_COUNT)
+    private var sampleRate = 0
+    private var generation = 0
+
+    // --- Audio thread only ---
     private var channels = 0
     /** Per-channel, per-band filter memory: [channel][band*4 + (x1,x2,y1,y2)]. */
     private var state: Array<DoubleArray> = emptyArray()
+    private var appliedGeneration = 0
 
-    /** Called from the service (binder thread) on every equalizer change. */
-    fun update(enabled: Boolean, gainsDb: IntArray) {
-        this.enabled = enabled
-        this.gainsDb = gainsDb.copyOf(EqSettings.BAND_COUNT)
-        if (sampleRate > 0) coeffs = buildCoeffs(this.gainsDb, sampleRate)
+    /** Called from the session callback (application thread) on every equalizer change. */
+    fun update(enabled: Boolean, gainsDb: IntArray) = synchronized(buildLock) {
+        enabledInput = enabled
+        gainsInput = gainsDb.copyOf(EqSettings.BAND_COUNT)
+        if (sampleRate > 0) publish()
     }
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         // Only 16-bit PCM is supported; anything else bypasses (returns NOT_SET -> inactive).
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) return AudioFormat.NOT_SET
-        sampleRate = inputAudioFormat.sampleRate
         channels = inputAudioFormat.channelCount
         state = Array(channels) { DoubleArray(EqSettings.BAND_COUNT * 4) }
-        coeffs = buildCoeffs(gainsDb, sampleRate)
+        synchronized(buildLock) {
+            sampleRate = inputAudioFormat.sampleRate
+            publish()
+        }
         return inputAudioFormat
     }
 
@@ -56,24 +94,30 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
         val out = replaceOutputBuffer(remaining)
-        // Bypass: copy through unchanged when disabled.
-        if (!enabled) {
+        // ONE volatile read: coeffs, activeBands and enabled always belong to the same rebuild.
+        val cfg = tuning
+        if (cfg.generation != appliedGeneration) {
+            appliedGeneration = cfg.generation
+            clearState()
+        }
+        val co = cfg.coeffs
+        val active = cfg.activeBands
+        // Bypass: copy through unchanged when disabled or every band is flat (all identity).
+        if (!cfg.enabled || active.isEmpty()) {
             out.put(inputBuffer)
             out.flip()
             return
         }
-        val co = coeffs
         val ch = channels
         val inShorts = inputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         out.order(ByteOrder.LITTLE_ENDIAN)
         val total = inShorts.remaining()
         var i = 0
+        var c = 0 // interleaved channel of sample i (a wrapping counter, not a per-sample modulo)
         while (i < total) {
-            val c = i % ch
             val st = state[c]
             var s = inShorts.get().toDouble()
-            var band = 0
-            while (band < EqSettings.BAND_COUNT) {
+            for (band in active) {
                 val k = band * 4
                 val bq = co[band]
                 val x = s
@@ -81,9 +125,12 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
                 st[k + 1] = st[k]; st[k] = x          // x2 = x1; x1 = x
                 st[k + 3] = st[k + 2]; st[k + 2] = y  // y2 = y1; y1 = y
                 s = y
-                band++
             }
-            out.putShort(s.toInt().coerceIn(-32768, 32767).toShort())
+            // ROUND, not truncate: `toInt()` rounds toward zero, which biases every sample
+            // toward silence and leaves a ±1 LSB dead zone around zero. round() also keeps a
+            // NaN from throwing (roundToInt would) — it lands on 0 through the clamp.
+            out.putShort(round(s).toInt().coerceIn(-32768, 32767).toShort())
+            if (++c == ch) c = 0
             i++
         }
         inputBuffer.position(inputBuffer.limit())
@@ -91,9 +138,23 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onFlush() = clearState()
-    override fun onReset() { clearState(); sampleRate = 0; channels = 0 }
+    override fun onReset() {
+        clearState()
+        channels = 0
+        synchronized(buildLock) { sampleRate = 0 }
+    }
 
     private fun clearState() = state.forEach { it.fill(0.0) }
+
+    /** Build the coeffs and publish them with [enabledInput] as one snapshot. Call under
+     *  [buildLock]: a rebuild that read a stale [sampleRate] could otherwise land AFTER the
+     *  one triggered by a format change and leave the wrong band centres in effect. */
+    private fun publish() {
+        val co = buildCoeffs(gainsInput, sampleRate)
+        val active = co.indices.filter { co[it][0] != 1.0 || co[it][1] != 0.0 }.toIntArray()
+        generation++
+        tuning = Tuning(enabledInput, co, active, generation)
+    }
 
     private companion object {
         /** Q for each peaking band — moderate width, smooth overlap across the 7 bands. */

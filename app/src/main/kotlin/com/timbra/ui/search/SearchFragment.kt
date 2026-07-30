@@ -6,28 +6,27 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
-import androidx.appcompat.app.AlertDialog
+import androidx.core.view.isVisible
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import com.timbra.R
-import com.timbra.data.SortDefaults
 import com.timbra.data.model.Track
 import com.timbra.data.sortedBy
+import com.timbra.data.tracksInPlayOrder
 import com.timbra.databinding.FragmentSearchBinding
+import com.timbra.folderSort
 import com.timbra.repository
 import com.timbra.ui.ItemActions
-import com.timbra.ui.MainActivity
+import com.timbra.ui.dialogs.Dialogs
 import com.timbra.ui.linearWithDivider
+import com.timbra.ui.player
+import com.timbra.ui.trackNowPlaying
 import com.timbra.ui.list.LibraryListAdapter
 import com.timbra.ui.list.ListItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -38,7 +37,6 @@ class SearchFragment : Fragment() {
     private val b get() = _b!!
 
     private lateinit var adapter: LibraryListAdapter
-    private val player get() = (requireActivity() as MainActivity).player
 
     private var results: List<Track> = emptyList()
     private var searchJob: Job? = null
@@ -58,8 +56,6 @@ class SearchFragment : Fragment() {
         adapter = LibraryListAdapter(
             owner = viewLifecycleOwner,
             onTrack = { index -> promptPlay(index) },
-            onFolder = { },
-            onNav = { },
             onLongItem = { item ->
                 if (item is ListItem.TrackRow) {
                     ItemActions.show(this, item.track.displayTitle, listOf(item.track))
@@ -92,21 +88,19 @@ class SearchFragment : Fragment() {
             }
         }
 
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                player.state.map { it.mediaId }.distinctUntilChanged()
-                    .collect { adapter.currentMediaId = it }
-            }
-        }
+        trackNowPlaying(adapter)
     }
 
     private fun onQuery(raw: String) {
         searchJob?.cancel()
-        val query = raw.trim().lowercase()
+        // NOT lowercased: the matching below is already case-insensitive, so folding here was
+        // pure waste (and could only ever change which characters the user's own input matched).
+        val query = raw.trim()
         if (query.isEmpty()) {
             results = emptyList()
             adapter.submit(emptyList())
-            showEmpty(R.string.search_prompt)
+            b.empty.setText(R.string.search_prompt)
+            b.empty.isVisible = true
             return
         }
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -121,7 +115,8 @@ class SearchFragment : Fragment() {
             if (_b == null) return@launch
             results = filtered
             adapter.submit(filtered.mapIndexed { i, t -> ListItem.TrackRow(t, i) })
-            if (filtered.isEmpty()) showEmpty(R.string.search_no_results) else b.empty.visibility = View.GONE
+            b.empty.isVisible = filtered.isEmpty()
+            if (filtered.isEmpty()) b.empty.setText(R.string.search_no_results)
         }
     }
 
@@ -135,20 +130,19 @@ class SearchFragment : Fragment() {
         // is open, so both actions must act on what the user actually tapped, not the live list.
         val snapshot = results
         val track = snapshot.getOrNull(index) ?: return
-        AlertDialog.Builder(requireContext())
-            .setTitle(getString(R.string.search_play_title, track.displayTitle))
-            .setItems(
-                arrayOf(
-                    getString(R.string.search_play_all_results),
-                    getString(R.string.search_play_folder),
-                )
-            ) { _, which ->
-                when (which) {
-                    0 -> playAllResults(snapshot, index)
-                    1 -> playFolder(track)
-                }
+        Dialogs.actions(
+            requireContext(),
+            getString(R.string.search_play_title, track.displayTitle),
+            arrayOf(
+                getString(R.string.search_play_all_results),
+                getString(R.string.search_play_folder),
+            ),
+        ) { which ->
+            when (which) {
+                0 -> playAllResults(snapshot, index)
+                1 -> playFolder(track)
             }
-            .show()
+        }
     }
 
     /** Play every result in [tracks], with the tapped song (at [index]) pulled to the front. */
@@ -164,12 +158,17 @@ class SearchFragment : Fragment() {
         val dir = track.path.substringBeforeLast('/', "")
         viewLifecycleOwner.lifecycleScope.launch {
             val repo = requireContext().repository
+            val order = requireContext().folderSort.sortOrder
             val node = repo.songFolders().firstOrNull { it.path == dir }
-            // If the folder node isn't found, rebuild it by directory from all tracks rather than
-            // silently degrading to a one-song queue — "Its folder" should queue the whole folder.
-            val folderTracks = (node?.tracks
-                ?: repo.allTracks().filter { it.path.substringBeforeLast('/', "") == dir })
-                .sortedBy(SortDefaults.FOLDER_SONGS)
+            val all = if (node == null) repo.allTracks() else emptyList()
+            // The filter + natural sort are whole-library work in the fallback case; the repo
+            // calls hop back to Main, so do them on Default rather than on the UI thread.
+            val folderTracks = withContext(Dispatchers.Default) {
+                // If the folder node isn't found, rebuild it by directory from all tracks rather
+                // than degrading to a one-song queue — "Its folder" should queue the whole folder.
+                node?.tracksInPlayOrder(order)
+                    ?: all.filter { it.path.substringBeforeLast('/', "") == dir }.sortedBy(order)
+            }
             val start = folderTracks.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
             if (_b == null) return@launch
             player.play(folderTracks, start, folderContext = dir)
@@ -194,11 +193,6 @@ class SearchFragment : Fragment() {
         imeFocusObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener)
         imeFocusListener = null
         imeFocusObserver = null
-    }
-
-    private fun showEmpty(textRes: Int) {
-        b.empty.setText(textRes)
-        b.empty.visibility = View.VISIBLE
     }
 
     override fun onDestroyView() {

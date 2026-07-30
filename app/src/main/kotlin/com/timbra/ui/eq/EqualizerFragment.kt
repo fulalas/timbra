@@ -8,7 +8,6 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.SeekBar
-import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.view.MenuProvider
 import androidx.core.view.doOnLayout
@@ -18,7 +17,7 @@ import com.timbra.databinding.FragmentEqualizerBinding
 import com.timbra.databinding.ItemEqBandBinding
 import com.timbra.eqSettings
 import com.timbra.player.EqSettings
-import com.timbra.ui.MainActivity
+import com.timbra.ui.player
 
 /**
  * The 7-band graphic equalizer, opened from the global 3-dot menu. Reads/writes the persisted
@@ -30,12 +29,17 @@ class EqualizerFragment : Fragment(), MenuProvider {
     private var _b: FragmentEqualizerBinding? = null
     private val b get() = _b!!
 
-    private val player get() = (requireActivity() as MainActivity).player
     private val settings get() = requireContext().eqSettings
 
-    private val faders = arrayOfNulls<VerticalFader>(EqSettings.BAND_COUNT)
-    private val seeks = arrayOfNulls<SeekBar>(EqSettings.BAND_COUNT)
-    private val gainLabels = arrayOfNulls<TextView>(EqSettings.BAND_COUNT)
+    /** One inflated row binding per band; index-aligned with [EqSettings.BAND_FREQS]. */
+    private var rows: List<ItemEqBandBinding> = emptyList()
+
+    /**
+     * The live band gains. The screen works from memory while a fader is dragged — every
+     * step used to re-parse and re-write the persisted string twice — and persists once on
+     * release (see [VerticalFader.onRelease]) and on reset.
+     */
+    private lateinit var gains: IntArray
 
     /** Suppresses persistence/apply while we set slider positions programmatically. */
     private var binding = false
@@ -49,9 +53,9 @@ class EqualizerFragment : Fragment(), MenuProvider {
         requireActivity().addMenuProvider(this, viewLifecycleOwner)
 
         val inflater = LayoutInflater.from(requireContext())
-        val gains = settings.gains()
+        gains = settings.gains()
 
-        for (i in 0 until EqSettings.BAND_COUNT) {
+        rows = List(EqSettings.BAND_COUNT) { i ->
             val row = ItemEqBandBinding.inflate(inflater, b.bands, true)
             row.bandFreq.text = freqLabel(EqSettings.BAND_FREQS[i])
             row.bandSeek.max = EqSettings.MAX_GAIN_DB - EqSettings.MIN_GAIN_DB
@@ -63,7 +67,7 @@ class EqualizerFragment : Fragment(), MenuProvider {
                     val db = progress + EqSettings.MIN_GAIN_DB
                     row.bandGain.text = gainLabel(db)
                     if (binding) return
-                    settings.setBand(i, db)
+                    gains[i] = db
                     applyLive()
                 }
                 override fun onStartTrackingTouch(sb: SeekBar) {}
@@ -72,15 +76,14 @@ class EqualizerFragment : Fragment(), MenuProvider {
             // The whole column is the touch target (generous tolerance): map touch Y -> progress.
             row.bandHolder.max = row.bandSeek.max
             row.bandHolder.onValue = { p -> row.bandSeek.progress = p }
+            row.bandHolder.onRelease = { settings.setGains(gains) }
             // Turn the horizontal SeekBar into a vertical fader: make it as long as its holder,
             // then rotate -90° (max ends up at the top). Done post-layout so the height is known.
             row.bandHolder.doOnLayout { holder ->
                 row.bandSeek.layoutParams = row.bandSeek.layoutParams.also { it.width = holder.height }
                 row.bandSeek.rotation = -90f
             }
-            faders[i] = row.bandHolder
-            seeks[i] = row.bandSeek
-            gainLabels[i] = row.bandGain
+            row
         }
 
         b.eqEnable.isChecked = settings.enabled
@@ -118,23 +121,27 @@ class EqualizerFragment : Fragment(), MenuProvider {
 
     private fun resetToFlat() {
         settings.reset()
+        gains = IntArray(EqSettings.BAND_COUNT)
         binding = true
-        for (i in 0 until EqSettings.BAND_COUNT) {
-            seeks[i]?.progress = -EqSettings.MIN_GAIN_DB   // 0 dB -> center
-            gainLabels[i]?.text = gainLabel(0)
+        rows.forEach {
+            it.bandSeek.progress = -EqSettings.MIN_GAIN_DB   // 0 dB -> center
+            it.bandGain.text = gainLabel(0)
         }
         binding = false
         applyLive()
     }
 
-    private fun applyLive() = player.applyEq(settings.enabled, settings.gains())
+    private fun applyLive() = player.applyEq(settings.enabled, gains)
 
     private fun setBandsEnabled(enabled: Boolean) {
         b.bands.alpha = if (enabled) 1f else 0.4f
-        faders.forEach { it?.isEnabled = enabled }
-        // Also disable the underlying SeekBars: when a fader stops intercepting (disabled), the
-        // still-enabled child SeekBar would otherwise keep receiving touches on its thumb strip.
-        seeks.forEach { it?.isEnabled = enabled }
+        rows.forEach {
+            it.bandHolder.isEnabled = enabled
+            // Also disable the underlying SeekBar: when a fader stops intercepting (disabled),
+            // the still-enabled child SeekBar would otherwise keep receiving touches on its
+            // thumb strip.
+            it.bandSeek.isEnabled = enabled
+        }
     }
 
     /** "0", "+3", "-5" (dB). */
@@ -149,9 +156,10 @@ class EqualizerFragment : Fragment(), MenuProvider {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        faders.fill(null)
-        seeks.fill(null)
-        gainLabels.fill(null)
+        // Defensive: a drag interrupted by navigation would otherwise lose its last steps
+        // (gains normally persist on fader release).
+        if (::gains.isInitialized) settings.setGains(gains)
+        rows = emptyList()
         _b = null
     }
 }

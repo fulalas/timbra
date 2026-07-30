@@ -7,7 +7,6 @@ import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.MenuProvider
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -20,7 +19,8 @@ import com.timbra.R
 import com.timbra.databinding.FragmentListBinding
 import com.timbra.player.QueueItem
 import com.timbra.ui.ItemActions
-import com.timbra.ui.MainActivity
+import com.timbra.ui.dialogs.Dialogs
+import com.timbra.ui.player
 import com.timbra.ui.linearWithDivider
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -37,11 +37,13 @@ class QueueFragment : Fragment(), MenuProvider {
 
     private lateinit var adapter: QueueAdapter
     private lateinit var touchHelper: ItemTouchHelper
-    private val player get() = (requireActivity() as MainActivity).player
 
     private var fullQueue: List<QueueItem> = emptyList()
     private var displayed: List<QueueItem> = emptyList()
     private var dragging = false
+
+    /** A queue emission arrived while a drag held the list; re-apply it on the drop. */
+    private var missedQueueUpdate = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
         _b = FragmentListBinding.inflate(inflater, container, false)
@@ -51,7 +53,9 @@ class QueueFragment : Fragment(), MenuProvider {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         adapter = QueueAdapter(
             owner = viewLifecycleOwner,
-            onClick = { player.seekToQueueItem(it) },
+            // The row carries the timeline index it was BOUND with, which lags a reorder until
+            // the queue flow re-emits — so the id is the authority, exactly as for Remove.
+            onClick = { item -> player.seekToQueueItem(item.timelineIndex, item.mediaId) },
             onLong = { item ->
                 ItemActions.showForQueue(this, item) {
                     player.removeQueueItem(item.timelineIndex, item.mediaId)
@@ -83,7 +87,15 @@ class QueueFragment : Fragment(), MenuProvider {
     }
 
     private fun refreshList() {
-        if (dragging) return // don't reset the list mid-drag
+        if (dragging) {
+            // Don't reset the list under the finger — but remember that something arrived, so
+            // the drop re-applies it. Swallowing it outright left the rows bound to timeline
+            // indices from a queue that had since been replaced (a folder advance, Shuffle-All),
+            // and nothing ever re-emitted to correct them.
+            missedQueueUpdate = true
+            return
+        }
+        missedQueueUpdate = false
         // Show all enqueued songs; already-played ones remain (dimmed by the adapter).
         val next = fullQueue.filter { it.enqueued }
         if (next != displayed) {
@@ -99,12 +111,12 @@ class QueueFragment : Fragment(), MenuProvider {
 
     override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_clear_queue -> {
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.menu_clear_queue)
-                .setMessage(R.string.clear_queue_confirm)
-                .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(R.string.menu_clear_queue) { _, _ -> player.clearQueue() }
-                .show()
+            Dialogs.confirm(
+                requireContext(),
+                titleRes = R.string.menu_clear_queue,
+                message = getString(R.string.clear_queue_confirm),
+                confirmRes = R.string.menu_clear_queue,
+            ) { player.clearQueue() }
             true
         }
         else -> false
@@ -119,7 +131,10 @@ class QueueFragment : Fragment(), MenuProvider {
         override fun onMove(
             rv: RecyclerView, vh: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder,
         ): Boolean {
-            adapter.moveItem(vh.bindingAdapterPosition, target.bindingAdapterPosition)
+            val from = vh.bindingAdapterPosition
+            val to = target.bindingAdapterPosition
+            if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
+            adapter.moveItem(from, to)
             return true
         }
 
@@ -133,6 +148,11 @@ class QueueFragment : Fragment(), MenuProvider {
             dragging = false
             // Commit the new order to the player; the queue flow then refreshes cleanly.
             player.reorderQueue(adapter.currentItems().map { it.mediaId })
+            // A reorder that reached the player re-emits and refreshes the list on its own, but
+            // one that netted no move (or whose ids are gone) doesn't — so apply anything that
+            // arrived during the drag, and re-sync the highlight the drag also suppressed.
+            if (missedQueueUpdate) refreshList()
+            adapter.currentIndex = player.state.value.queueIndex
         }
 
         override fun onSwiped(vh: RecyclerView.ViewHolder, direction: Int) {}

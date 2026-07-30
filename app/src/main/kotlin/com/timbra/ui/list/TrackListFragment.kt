@@ -12,12 +12,9 @@ import androidx.core.os.bundleOf
 import androidx.core.view.MenuProvider
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import com.timbra.R
-import com.timbra.app
 import com.timbra.data.SortDefaults
 import com.timbra.data.SortOrder
 import com.timbra.data.sortedBy
@@ -25,12 +22,14 @@ import com.timbra.data.model.Track
 import com.timbra.databinding.FragmentListBinding
 import com.timbra.repository
 import com.timbra.ui.ItemActions
-import com.timbra.ui.MainActivity
 import com.timbra.ui.dialogs.Dialogs
 import com.timbra.ui.linearWithDivider
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import com.timbra.ui.player
+import com.timbra.ui.reloadOnLibraryChange
+import com.timbra.ui.trackNowPlaying
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * A browse list that renders either an index of albums/artists/genres/playlists
@@ -46,8 +45,15 @@ class TrackListFragment : Fragment(), MenuProvider {
     private lateinit var listTitle: String
 
     private lateinit var adapter: LibraryListAdapter
-    private var tracks: List<Track> = emptyList()
     private lateinit var sortOrder: SortOrder
+
+    /**
+     * What a row tap plays, committed on the main thread TOGETHER with the rows it belongs to.
+     * Assigning it from inside the background sort block meant that during a re-sort it no longer
+     * matched the rows on screen, so a tap carried an index from the old order into the new one
+     * and played a different song.
+     */
+    private var playable: List<Track> = emptyList()
 
     private val isTrackMode: Boolean get() = kind in TRACK_KINDS
 
@@ -66,8 +72,7 @@ class TrackListFragment : Fragment(), MenuProvider {
 
         adapter = LibraryListAdapter(
             owner = viewLifecycleOwner,
-            onTrack = { index -> player().play(tracks, index) },
-            onFolder = { /* not used here */ },
+            onTrack = { index -> player.play(playable, index) },
             onNav = { nav -> openIndexTarget(nav) },
             onLongItem = { item ->
                 if (item is ListItem.TrackRow) {
@@ -80,60 +85,70 @@ class TrackListFragment : Fragment(), MenuProvider {
 
         requireActivity().addMenuProvider(this, viewLifecycleOwner)
 
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                requireContext().app.libraryEpoch.collect { load() }
-            }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                player().state.map { it.mediaId }.distinctUntilChanged()
-                    .collect { adapter.currentMediaId = it }
-            }
-        }
+        reloadOnLibraryChange { load() }
+        trackNowPlaying(adapter)
     }
-
-    private fun player() = (requireActivity() as MainActivity).player
 
     private fun load() {
         viewLifecycleOwner.lifecycleScope.launch {
             val repo = requireContext().repository
-            val items: List<ListItem> = when (kind) {
+            // Resolved on the main thread while the fragment is definitely attached: the row
+            // mapping below runs on Dispatchers.Default, and Fragment.getString() there would
+            // throw once the user navigated away mid-load.
+            val res = requireContext().resources
+            // The queries are IO-dispatched, but the whole-library natural sort isn't free —
+            // keep it (and the row mapping) off the main thread too.
+            val built = withContext(Dispatchers.Default) { when (kind) {
                 KIND_SONGS -> trackRows(repo.allTracks().sortedBy(sortOrder))
                 KIND_ALBUM -> trackRows(repo.tracksForAlbum(listId).sortedBy(sortOrder))
                 KIND_ARTIST -> trackRows(repo.tracksForArtist(listTitle).sortedBy(sortOrder))
                 KIND_GENRE -> trackRows(repo.tracksForGenre(listId).sortedBy(sortOrder))
                 KIND_PLAYLIST -> trackRows(repo.tracksForPlaylist(listId))
-                KIND_ALBUMS -> repo.albums().map {
-                    ListItem.NavRow(it.title, countLabel(it.trackCount), R.drawable.matte_albums,
-                        KIND_ALBUM, it.id, it.title)
+                KIND_ALBUMS -> navRows(res, repo.albums(), R.drawable.matte_albums, KIND_ALBUM) {
+                    Triple(it.id, it.title, it.trackCount)
                 }
-                KIND_ARTISTS -> repo.artists().map {
-                    ListItem.NavRow(it.name, countLabel(it.trackCount), R.drawable.matte_artists,
-                        KIND_ARTIST, it.id, it.name)
+                KIND_ARTISTS -> navRows(res, repo.artists(), R.drawable.matte_artists, KIND_ARTIST) {
+                    Triple(it.id, it.name, it.trackCount)
                 }
-                KIND_GENRES -> repo.genres().map {
-                    ListItem.NavRow(it.name, countLabel(it.trackCount), R.drawable.matte_genres,
-                        KIND_GENRE, it.id, it.name)
+                KIND_GENRES -> navRows(res, repo.genres(), R.drawable.matte_genres, KIND_GENRE) {
+                    Triple(it.id, it.name, it.trackCount)
                 }
-                KIND_PLAYLISTS -> repo.playlists().map {
-                    ListItem.NavRow(it.name, countLabel(it.trackCount), R.drawable.matte_playlists,
-                        KIND_PLAYLIST, it.id, it.name)
+                KIND_PLAYLISTS -> navRows(res, repo.playlists(), R.drawable.matte_playlists, KIND_PLAYLIST) {
+                    Triple(it.id, it.name, it.trackCount)
                 }
-                else -> emptyList()
-            }
+                else -> Built(emptyList(), emptyList())
+            } }
             _b ?: return@launch
-            adapter.submit(items)
-            b.empty.isVisible = items.isEmpty()
+            // Commit the rows and what they play in one step, on the main thread.
+            playable = built.playable
+            adapter.submit(built.items)
+            b.empty.isVisible = built.items.isEmpty()
         }
     }
 
-    private fun trackRows(sorted: List<Track>): List<ListItem> {
-        tracks = sorted
-        return sorted.mapIndexed { i, t -> ListItem.TrackRow(t, i) }
-    }
+    /** Rows plus the track list a row tap plays from (empty for index screens). */
+    private class Built(val items: List<ListItem>, val playable: List<Track>)
 
-    private fun countLabel(n: Int) = getString(R.string.song_count, n)
+    private fun trackRows(sorted: List<Track>): Built =
+        Built(sorted.mapIndexed { i, t -> ListItem.TrackRow(t, i) }, sorted)
+
+    /**
+     * Index rows for albums/artists/genres/playlists — one shape, four callers, so the id and
+     * kind arguments can't be transposed and the label can't be passed twice by accident.
+     */
+    private fun <T> navRows(
+        res: android.content.res.Resources,
+        entries: List<T>,
+        iconRes: Int,
+        kind: String,
+        info: (T) -> Triple<Long, String, Int>,
+    ): Built = Built(
+        entries.map { entry ->
+            val (id, label, count) = info(entry)
+            ListItem.NavRow(label, res.getString(R.string.song_count, count), iconRes, kind, id, label)
+        },
+        emptyList(),
+    )
 
     private fun openIndexTarget(nav: ListItem.NavRow) {
         findNavController().navigate(
@@ -152,7 +167,7 @@ class TrackListFragment : Fragment(), MenuProvider {
 
     override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_sort -> {
-            Dialogs.showSort(requireContext(), SortOrder.entries, sortOrder) {
+            Dialogs.showSort(requireContext(), sortOrder) {
                 sortOrder = it
                 load()
             }

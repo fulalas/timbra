@@ -19,20 +19,30 @@ class VerticalFader @JvmOverloads constructor(
     var max = 100
     var onValue: ((Int) -> Unit)? = null
 
+    /** Fires when the finger lifts (or the gesture is cancelled) — the moment to persist. */
+    var onRelease: (() -> Unit)? = null
+
     // Steal touches from the child SeekBar so the entire column is the hit target.
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = isEnabled
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isEnabled) return false
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> parent?.requestDisallowInterceptTouchEvent(true)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+        val released = when (event.action) {
+            MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true); false }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
+                true
+            }
+            else -> false
         }
+        // Map the event's Y first, THEN persist: the release coordinate is itself a value, and
+        // notifying afterwards meant the last step of a drag reached the live DSP but never
+        // SharedPreferences (screen and sound showed one gain, prefs held the previous one).
         if (height > 0) {
             val frac = 1f - (event.y / height).coerceIn(0f, 1f)
             onValue?.invoke((frac * max).roundToInt())
         }
+        if (released) onRelease?.invoke()
         return true
     }
 }

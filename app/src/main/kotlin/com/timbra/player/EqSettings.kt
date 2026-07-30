@@ -31,13 +31,6 @@ class EqSettings(context: Context) {
         prefs.edit().putString(KEY_GAINS, clamped.joinToString(",")).apply()
     }
 
-    fun setBand(index: Int, db: Int) {
-        if (index !in 0 until BAND_COUNT) return
-        val g = gains()
-        g[index] = db.coerceIn(MIN_GAIN_DB, MAX_GAIN_DB)
-        setGains(g)
-    }
-
     /** Reset every band to 0 dB (flat). Leaves the on/off state untouched. */
     fun reset() = setGains(IntArray(BAND_COUNT))
 

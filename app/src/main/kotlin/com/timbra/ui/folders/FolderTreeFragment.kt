@@ -12,31 +12,30 @@ import androidx.core.os.bundleOf
 import androidx.core.view.MenuProvider
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.timbra.R
-import com.timbra.app
 import com.timbra.data.FolderTreeBuilder
-import com.timbra.data.SortDefaults
-import com.timbra.data.SortOrder
 import com.timbra.data.ViewAs
 import com.timbra.data.model.FolderNode
 import com.timbra.data.model.Track
 import com.timbra.data.sortedBy
+import com.timbra.data.tracksInPlayOrder
 import com.timbra.databinding.FragmentListBinding
+import com.timbra.folderSort
 import com.timbra.repository
 import com.timbra.ui.ItemActions
-import com.timbra.ui.MainActivity
 import com.timbra.ui.dialogs.Dialogs
 import com.timbra.ui.linearWithDivider
 import com.timbra.ui.list.LibraryListAdapter
 import com.timbra.ui.list.ListItem
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import com.timbra.ui.player
+import com.timbra.ui.reloadOnLibraryChange
+import com.timbra.ui.trackNowPlaying
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Folder browser. Defaults (per the product spec): folders shown as a HIERARCHY and
@@ -51,15 +50,35 @@ class FolderTreeFragment : Fragment(), MenuProvider {
     private lateinit var folderTitle: String
 
     private lateinit var adapter: LibraryListAdapter
-    private var playable: List<Track> = emptyList()
+
+    /**
+     * What a row tap plays, committed on the main thread TOGETHER with the rows it belongs to.
+     * The playable list used to be assigned from inside the background sort block, so during a
+     * re-sort (or a View-As switch) it no longer matched the rows still on screen — a tap in that
+     * window carried an index from the old list into the new one and played a different song.
+     */
+    private class Loaded(
+        val items: List<ListItem>,
+        val playable: List<Track>,
+        /** The Advance-List anchor for a queue built from these rows: the browsed folder in
+         *  hierarchy view, and nothing in flat view (the queue spans a whole subtree that no
+         *  single directory names, so the playing file's own folder is the better anchor). */
+        val folderContext: String?,
+    )
+
+    private var loaded = Loaded(emptyList(), emptyList(), null)
+
+    /** The library epoch the list was last built for (see the collector below). */
+    private var loadedEpoch = -1
 
     // On the first load after arriving here (e.g. the player's song-info tap opens the
     // playing track's folder), center that track in the list. Consumed once, so later
     // reloads (a rescan) don't yank the user's scroll position around.
     private var centerOnPlaying = true
 
-    private var viewAs: ViewAs = SortDefaults.FOLDER_VIEW
-    private var sortOrder: SortOrder = SortDefaults.FOLDER_SONGS
+    /** Persisted app-wide, because it also decides the order folder QUEUES are built in
+     *  (see [com.timbra.data.FolderSort]). */
+    private val folderSort get() = requireContext().folderSort
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
         _b = FragmentListBinding.inflate(inflater, container, false)
@@ -73,9 +92,13 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
         adapter = LibraryListAdapter(
             owner = viewLifecycleOwner,
-            onTrack = { index -> player().play(playable, index) },
+            // folderContext anchors the Advance-List walk on the folder actually being browsed;
+            // omitting it left the anchor to the playing file's own directory, which in flat view
+            // is a subfolder whose neighbours are already inside this queue.
+            onTrack = { index ->
+                player.play(loaded.playable, index, folderContext = loaded.folderContext)
+            },
             onFolder = { node -> openFolder(node) },
-            onNav = { },
             onLongItem = { onLong(it) },
         )
         b.recycler.linearWithDivider(divider = false)
@@ -83,42 +106,41 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
         requireActivity().addMenuProvider(this, viewLifecycleOwner)
 
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                requireContext().app.libraryEpoch.collect { load() }
-            }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                player().state.map { it.mediaId }.distinctUntilChanged()
-                    .collect { adapter.currentMediaId = it }
-            }
-        }
+        reloadOnLibraryChange { load() }
+        trackNowPlaying(adapter)
     }
-
-    private fun player() = (requireActivity() as MainActivity).player
 
     private fun load() {
         viewLifecycleOwner.lifecycleScope.launch {
             val root = requireContext().repository.folderRoot()
-            val node = FolderTreeBuilder.find(root, folderPath) ?: root
-            val items = ArrayList<ListItem>()
-
-            if (viewAs == ViewAs.HIERARCHY) {
-                FolderTreeBuilder.sortedChildren(node)
-                    .forEach { items.add(ListItem.FolderRow(it)) }
-                playable = node.tracks.sortedBy(sortOrder)
-            } else {
-                playable = FolderTreeBuilder.flatten(node).sortedBy(sortOrder)
+            val viewAs = folderSort.viewAs
+            val order = folderSort.sortOrder
+            // The natural sort over a big folder isn't free — keep it off the main thread.
+            val result = withContext(Dispatchers.Default) {
+                val node = FolderTreeBuilder.find(root, folderPath) ?: root
+                val items = ArrayList<ListItem>()
+                val playable: List<Track>
+                var context: String? = null
+                if (viewAs == ViewAs.HIERARCHY) {
+                    FolderTreeBuilder.sortedChildren(node)
+                        .forEach { items.add(ListItem.FolderRow(it)) }
+                    playable = node.tracksInPlayOrder(order)
+                    context = node.path.takeIf { it.isNotEmpty() }
+                } else {
+                    playable = FolderTreeBuilder.flatten(node).sortedBy(order)
+                }
+                playable.forEachIndexed { i, t -> items.add(ListItem.TrackRow(t, i)) }
+                Loaded(items, playable, context)
             }
-            playable.forEachIndexed { i, t -> items.add(ListItem.TrackRow(t, i)) }
 
             _b ?: return@launch
-            adapter.submit(items)
-            b.empty.isVisible = items.isEmpty()
+            // Commit the rows and what they play in one step, on the main thread.
+            loaded = result
+            adapter.submit(result.items)
+            b.empty.isVisible = result.items.isEmpty()
             if (centerOnPlaying) {
                 centerOnPlaying = false
-                centerPlaying(items)
+                centerPlaying(result.items)
             }
         }
     }
@@ -130,7 +152,7 @@ class FolderTreeFragment : Fragment(), MenuProvider {
      * centering offset is exact regardless of row type.
      */
     private fun centerPlaying(items: List<ListItem>) {
-        val playingId = player().state.value.mediaId
+        val playingId = player.state.value.mediaId
         val pos = items.indexOfFirst { it is ListItem.TrackRow && it.track.id == playingId }
         if (pos < 0) return
         b.recycler.post {
@@ -151,13 +173,24 @@ class FolderTreeFragment : Fragment(), MenuProvider {
     }
 
     private fun onLong(item: ListItem) {
-        val (label, ts) = when (item) {
-            is ListItem.TrackRow -> item.track.displayTitle to listOf(item.track)
-            is ListItem.FolderRow ->
-                item.node.name to FolderTreeBuilder.flatten(item.node).sortedBy(sortOrder)
+        when (item) {
+            is ListItem.TrackRow ->
+                ItemActions.show(this, item.track.displayTitle, listOf(item.track))
+            is ListItem.FolderRow -> {
+                // Flattening a whole subtree and natural-sorting it is exactly the work load()
+                // takes care to keep off the main thread — doing it inline in the click callback
+                // froze the UI for a large folder before the dialog even appeared.
+                val order = folderSort.sortOrder
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val ts = withContext(Dispatchers.Default) {
+                        FolderTreeBuilder.flatten(item.node).sortedBy(order)
+                    }
+                    if (_b == null) return@launch
+                    ItemActions.show(this@FolderTreeFragment, item.node.name, ts)
+                }
+            }
             else -> return
         }
-        ItemActions.show(this, label, ts)
     }
 
     private fun openFolder(node: FolderNode) {
@@ -175,12 +208,14 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
     override fun onMenuItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_view_as -> {
-            Dialogs.showViewAs(requireContext(), viewAs) { viewAs = it; load() }
+            Dialogs.showViewAs(requireContext(), folderSort.viewAs) {
+                folderSort.viewAs = it; load()
+            }
             true
         }
         R.id.action_sort -> {
-            Dialogs.showSort(requireContext(), SortOrder.entries, sortOrder) {
-                sortOrder = it; load()
+            Dialogs.showSort(requireContext(), folderSort.sortOrder) {
+                folderSort.sortOrder = it; load()
             }
             true
         }

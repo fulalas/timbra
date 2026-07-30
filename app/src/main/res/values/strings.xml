@@ -29,7 +29,6 @@
 
     <!-- Player -->
     <string name="cd_play">Play</string>
-    <string name="cd_pause">Pause</string>
     <string name="cd_next">Next</string>
     <string name="cd_prev">Previous</string>
     <string name="cd_shuffle">Shuffle</string>
@@ -83,17 +82,12 @@
     <!-- About -->
     <string name="menu_about">About</string>
     <string name="about_body">Version %1$s (build %2$d)\nPackage: %3$s\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\n• Audio engine: Media3 / ExoPlayer with FFmpeg decoders (wide format support, all ABIs incl. arm64)\n• Folder-hierarchy browsing, full library, gapless playback, background playback\n\nBuilt with Kotlin.</string>
-    <string name="cd_library">Library</string>
     <string name="cd_album_art">Album art</string>
 
     <!-- Misc -->
     <string name="unknown_artist">Unknown artist</string>
     <string name="unknown_album">Unknown album</string>
-    <string name="unknown_genre">Unknown genre</string>
     <string name="nothing_playing">Nothing playing</string>
-    <string name="permission_needed">This app needs access to your audio files.</string>
-    <string name="grant">Grant</string>
     <string name="empty_folder">No audio here</string>
     <string name="song_count">%1$d songs</string>
-    <string name="channel_playback">Playback</string>
 </resources>

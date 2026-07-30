@@ -7,7 +7,6 @@ import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import androidx.core.os.bundleOf
 import androidx.core.view.MenuProvider
 import androidx.fragment.app.Fragment
@@ -17,6 +16,7 @@ import com.timbra.R
 import com.timbra.data.model.Category
 import com.timbra.data.model.CategoryKind
 import com.timbra.databinding.FragmentListBinding
+import com.timbra.ui.dialogs.Dialogs
 import com.timbra.ui.linearWithDivider
 import com.timbra.ui.list.TrackListFragment
 
@@ -47,29 +47,31 @@ class LibraryFragment : Fragment(), MenuProvider {
 
     private fun onCategory(cat: Category) {
         val nav = findNavController()
-        when (cat.kind) {
-            CategoryKind.FOLDERS -> nav.navigate(
-                R.id.folderTreeFragment,
-                bundleOf("folderPath" to "", "folderTitle" to getString(R.string.cat_folders)),
-            )
-            CategoryKind.QUEUE -> nav.navigate(R.id.queueFragment)
-            else -> {
-                val kind = when (cat.kind) {
-                    CategoryKind.ALBUMS -> TrackListFragment.KIND_ALBUMS
-                    CategoryKind.ARTISTS -> TrackListFragment.KIND_ARTISTS
-                    CategoryKind.GENRES -> TrackListFragment.KIND_GENRES
-                    CategoryKind.PLAYLISTS -> TrackListFragment.KIND_PLAYLISTS
-                    else -> TrackListFragment.KIND_SONGS
-                }
+        // ONE dispatch over the enum, with every value spelled out — the nested second `when`
+        // ended in an `else -> KIND_SONGS` catch-all that could only ever mean SONGS, so a newly
+        // added CategoryKind silently opened "All Songs" instead of failing to compile.
+        val listKind = when (cat.kind) {
+            CategoryKind.FOLDERS -> {
                 nav.navigate(
-                    R.id.trackListFragment,
-                    bundleOf(
-                        "listKind" to kind,
-                        "listTitle" to getString(cat.titleRes),
-                    ),
+                    R.id.folderTreeFragment,
+                    bundleOf("folderPath" to "", "folderTitle" to getString(R.string.cat_folders)),
                 )
+                return
             }
+            CategoryKind.QUEUE -> {
+                nav.navigate(R.id.queueFragment)
+                return
+            }
+            CategoryKind.SONGS -> TrackListFragment.KIND_SONGS
+            CategoryKind.ALBUMS -> TrackListFragment.KIND_ALBUMS
+            CategoryKind.ARTISTS -> TrackListFragment.KIND_ARTISTS
+            CategoryKind.GENRES -> TrackListFragment.KIND_GENRES
+            CategoryKind.PLAYLISTS -> TrackListFragment.KIND_PLAYLISTS
         }
+        nav.navigate(
+            R.id.trackListFragment,
+            bundleOf("listKind" to listKind, "listTitle" to getString(cat.titleRes)),
+        )
     }
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
@@ -86,11 +88,7 @@ class LibraryFragment : Fragment(), MenuProvider {
             R.string.about_body,
             BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.APPLICATION_ID,
         )
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.app_name)
-            .setMessage(body)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        Dialogs.message(requireContext(), R.string.app_name, body)
     }
 
     override fun onDestroyView() {

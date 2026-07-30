@@ -5,7 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -15,7 +14,6 @@ import android.view.animation.AnimationUtils
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.SeekBar
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
@@ -24,16 +22,20 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.timbra.R
+import com.timbra.app
 import com.timbra.data.model.Track
 import com.timbra.databinding.FragmentPlayerBinding
 import com.timbra.player.QueueItem
 import com.timbra.player.RepeatMode
 import com.timbra.player.ShuffleMode
 import com.timbra.player.UiPlayback
+import com.timbra.player.cycleNext
 import com.timbra.repository
 import com.timbra.ui.Format
 import com.timbra.ui.MainActivity
 import com.timbra.ui.TitleMarquee
+import com.timbra.ui.TransportBinder
+import com.timbra.ui.player
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
@@ -48,14 +50,21 @@ class PlayerFragment : Fragment() {
     private var _b: FragmentPlayerBinding? = null
     private val b get() = _b!!
 
-    private val player get() = (requireActivity() as MainActivity).player
-    private lateinit var artAdapter: ArtPagerAdapter
+    /** The control column, shared between the portrait and landscape layouts via an
+     *  `<include>` (see res/layout/player_controls.xml) — so the deck lives on [b] and every
+     *  transport/info view on this one binding. */
+    private val c get() = b.controls
 
-    private var userSeeking = false
+    private lateinit var artAdapter: ArtPagerAdapter
+    private lateinit var transport: TransportBinder
+
     private var currentFilePath = ""
 
+    /** The activity, cast once instead of at every call site. */
+    private val main get() = requireActivity() as MainActivity
+
     /** Marquees the song title when it overflows — same one-loop scroll as the toolbar path,
-     *  but auto only: a tap on the title opens the song's folder ([b.info]), so there's no
+     *  but auto only: a tap on the title opens the song's folder ([c.info]), so there's no
      *  tap-to-replay here. Rebuilt per view; [boundTitle] guards it against restarting on
      *  every position tick. */
     private var titleMarquee: TitleMarquee? = null
@@ -92,8 +101,12 @@ class PlayerFragment : Fragment() {
      */
     private var sawDrag = false
 
-    /** The live queue (without phantom pages); the pager shows this plus maybe phantom cards. */
-    private var queueItems: List<QueueItem> = emptyList()
+    /**
+     * The live queue (without phantom pages); the pager shows this plus maybe phantom cards.
+     * Read straight from the flow — a mirrored field was a second source of truth that
+     * onViewCreated reset to empty while the flow still held the real queue.
+     */
+    private val queueItems: List<QueueItem> get() = player.queue.value
 
     /**
      * Advance-List phantom cards: [phantomPrev] leads the queue (previous folder's last song),
@@ -123,6 +136,12 @@ class PlayerFragment : Fragment() {
      *  re-index from a queue rebuild). */
     private var lastBoundMediaId = -1L
 
+    /** The state [bind] last applied. Most emissions are 500ms position ticks, so the static
+     *  views (icons, subtitle, duration) are re-set only when their source fields changed —
+     *  setImageResource in particular reloads + invalidates even for an unchanged res id.
+     *  Null forces a full re-apply (fresh view, foreground return). */
+    private var lastBound: UiPlayback? = null
+
     /**
      * A deck rebuild requested while the pager was mid-gesture. Mutating the pages during a
      * drag/fling shifts positions under the finger and fires spurious onPageSelected events
@@ -150,6 +169,10 @@ class PlayerFragment : Fragment() {
      *  [syncPager] and [rebuildPages] must not move/rebuild pages under the held finger. */
     private var vDragging = false
 
+    /** True while [cycleShuffle]'s library load is still suspended, so a second tap can't be
+     *  computed from the mode the first one hasn't applied yet. */
+    private var shuffleCycleInFlight = false
+
     /** The in-flight deck glide (see [glideDeckTo]); replacing it cancels the old one. */
     private var deckGlide: Runnable? = null
 
@@ -162,15 +185,6 @@ class PlayerFragment : Fragment() {
      *  sensitive on xxhdpi than mdpi). */
     private val commitFlingPxS by lazy { COMMIT_FLING_DP_S * resources.displayMetrics.density }
 
-    /** Temporary deck diagnostics (adb logcat -s TimbraDeck). */
-    private fun dlog(msg: String) = Log.d(
-        "TimbraDeck",
-        "$msg | idx=$playerIndex lead=$leadOffset cur=${_b?.artPager?.currentItem} " +
-            "n=${if (::artAdapter.isInitialized) artAdapter.itemCount else -1} " +
-            "adv=$advancing inFl=$advanceInFlight jump=$folderJumping idle=$pagerIdle " +
-            "vDrag=$vDragging pendAdv=${pendingAdvance != null} pendReb=$pendingRebuild",
-    )
-
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
         _b = FragmentPlayerBinding.inflate(inflater, container, false)
         return b.root
@@ -180,7 +194,7 @@ class PlayerFragment : Fragment() {
         // Next to the back arrow the player shows the playing song's folder path ([bind]
         // keeps it current); blank until the first state arrives. Reset the cached path so
         // a recreated view re-applies the title even when the song didn't change.
-        (requireActivity() as androidx.appcompat.app.AppCompatActivity).supportActionBar?.title = ""
+        main.supportActionBar?.title = ""
         currentFilePath = ""
 
         // The fragment instance survives on the back stack but the pager view is fresh
@@ -195,16 +209,17 @@ class PlayerFragment : Fragment() {
         pendingAdvance = null
         folderJumping = false
         vDragging = false
+        shuffleCycleInFlight = false
         deckGlide = null
         onDeckCommitted = null
         sawDrag = false
         lastBoundMediaId = -1L
+        lastBound = null
         pendingRebuild = false
-        queueItems = emptyList()
         phantomPrev = null
         phantomNext = null
         phantomKey = null
-        titleMarquee = TitleMarquee(b.title)
+        titleMarquee = TitleMarquee(c.title)
         boundTitle = null
 
         artAdapter = ArtPagerAdapter(viewLifecycleOwner)
@@ -323,7 +338,6 @@ class PlayerFragment : Fragment() {
         // Swiping the art pager (deck-style card flip) changes the track.
         b.artPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
-                dlog("pageSelected($position) sawDrag=$sawDrag")
                 // Only a real user drag may change the track; programmatic moves and the clamp
                 // ViewPager2 does when the queue shrinks also land here and must be ignored.
                 // Once an advance is pending, ignore everything until the pager settles: a fling
@@ -335,18 +349,15 @@ class PlayerFragment : Fragment() {
                 // possible (no card to swipe onto — e.g. no going back at the history start, no
                 // forward once everything has played). Consume the drag so follow-up selection
                 // events from the deck rebuild are never mistaken for another user action.
-                if (player.currentShuffle() != ShuffleMode.OFF) {
+                if (player.state.value.shuffle != ShuffleMode.OFF) {
                     when {
                         position < leadOffset -> { sawDrag = false; player.previousSong() }
                         position > leadOffset -> {
                             sawDrag = false
                             if (player.hasNext()) player.next()
-                            else {
-                                // Trailing card with nothing unplayed left = the Advance-List
-                                // next-folder fallback: defer the folder advance to the settle.
-                                advancing = true; advanceReady = false
-                                pendingAdvance = { runAdvance(forward = true) }
-                            }
+                            // Trailing card with nothing unplayed left = the Advance-List
+                            // next-folder fallback: defer the folder advance to the settle.
+                            else armAdvance(forward = true)
                         }
                     }
                     return
@@ -355,12 +366,10 @@ class PlayerFragment : Fragment() {
                 // Defer the folder advance until the swipe settles (see the settle handler) so
                 // the queue doesn't swap mid-fling.
                 if (phantomPrev != null && position == 0) {
-                    advancing = true; advanceReady = false
-                    pendingAdvance = { runAdvance(forward = false) }; return
+                    armAdvance(forward = false); return
                 }
                 if (phantomNext != null && position == leadOffset + queueItems.size) {
-                    advancing = true; advanceReady = false
-                    pendingAdvance = { runAdvance(forward = true) }; return
+                    armAdvance(forward = true); return
                 }
                 // A swipe moves through songs with the SAME transport calls as the
                 // previous/next buttons — one code path, so the two can never drift apart.
@@ -377,7 +386,6 @@ class PlayerFragment : Fragment() {
             }
 
             override fun onPageScrollStateChanged(state: Int) {
-                dlog("scrollState=$state")
                 if (state == ViewPager2.SCROLL_STATE_DRAGGING) {
                     sawDrag = true
                     // Self-heal: `advancing` still set when a NEW user drag starts — with no
@@ -393,6 +401,7 @@ class PlayerFragment : Fragment() {
                 }
                 pagerIdle = state == ViewPager2.SCROLL_STATE_IDLE
                 if (pagerIdle) {
+                    _b?.artPager?.removeCallbacks(pagerIdleHeal)
                     sawDrag = false
                     when {
                         // Swipe just settled on the phantom: now run the deferred advance. The
@@ -401,41 +410,34 @@ class PlayerFragment : Fragment() {
                         pendingAdvance != null -> { val go = pendingAdvance!!; pendingAdvance = null; go() }
                         // New queue already landed: reposition onto the real (identical) page.
                         advancing -> finalizeAdvanceIfReady()
-                        // A deck rebuild waited for the gesture to finish: apply it now; its
-                        // commit callback re-centers the pager (on the same art — invisible).
-                        pendingRebuild -> { pendingRebuild = false; rebuildPages() }
-                        // Normal settle: keep the pager on the playing track.
-                        else -> syncPager(playerIndex, animate = false)
+                        // A deck rebuild waited for the gesture to finish, or the pager simply
+                        // needs to be back on the playing track — the same "settle the deck"
+                        // policy the vertical drag applies.
+                        else -> afterVerticalDrag()
                     }
                 }
             }
         })
 
-        b.play.setOnClickListener { player.togglePlayPause() }
-        b.next.setOnClickListener { player.next() }
-        b.prev.setOnClickListener { player.previous() }
-        b.repeat.setOnClickListener { cycleRepeat() }
-        b.shuffle.setOnClickListener { cycleShuffle() }
+        c.play.setOnClickListener { player.togglePlayPause() }
+        c.next.setOnClickListener { player.next() }
+        c.prev.setOnClickListener { player.previous() }
+        c.repeat.setOnClickListener { cycleRepeat() }
+        c.shuffle.setOnClickListener { cycleShuffle() }
 
         // Tap the song info to open the folder the current track lives in — with its
         // ancestors on the back stack so Back walks up the folder tree.
-        b.info.setOnClickListener {
+        c.info.setOnClickListener {
             val dir = currentFilePath.substringBeforeLast('/', "")
-            if (dir.isNotEmpty()) (requireActivity() as MainActivity).openFolderChain(dir)
+            if (dir.isNotEmpty()) main.openFolderChain(dir)
         }
 
-        b.seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser) b.position.text = Format.clock(progress.toLong())
-            }
-
-            override fun onStartTrackingTouch(sb: SeekBar) { userSeeking = true }
-
-            override fun onStopTrackingTouch(sb: SeekBar) {
-                userSeeking = false
-                player.seekTo(sb.progress.toLong())
-            }
-        })
+        transport = TransportBinder(
+            seek = c.seek,
+            position = c.position,
+            duration = c.duration,
+            play = c.play,
+        ) { player.seekTo(it) }
 
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -449,34 +451,72 @@ class PlayerFragment : Fragment() {
                 // screen, foreground returns included.
                 currentFilePath = ""
                 boundTitle = null
-                launch { player.queue.collect { bindQueue(it) } }
+                lastBound = null
+                launch { player.queue.collect { bindQueue() } }
                 launch { player.state.collect { bind(it) } }
             }
         }
     }
 
     private fun cycleRepeat() {
-        val next = player.currentRepeat().next()
+        val next = player.state.value.repeat.cycleNext()
         player.setRepeat(next)
         showModePopup(next.titleRes, next.subtitleRes)
     }
 
+    /**
+     * Advance the shuffle mode one step.
+     *
+     * The ALL and OFF branches only apply the new mode AFTER a suspending library read, and the
+     * next mode is derived from the current one — so a second tap inside that window (the read is
+     * a full MediaStore scan whenever the track cache is cold, e.g. right after an Activity
+     * recreation) recomputed the same transition, toasted twice and ran the whole-library rebuild
+     * again. [shuffleCycleInFlight] makes the button ignore taps until the mode has landed.
+     */
     private fun cycleShuffle() {
-        val next = player.currentShuffle().next()
+        if (shuffleCycleInFlight) return
+        val next = player.state.value.shuffle.cycleNext()
         when (next) {
             ShuffleMode.CURRENT -> player.setShuffle(ShuffleMode.CURRENT)
-            ShuffleMode.ALL -> viewLifecycleOwner.lifecycleScope.launch {
+            ShuffleMode.ALL -> launchShuffleChange {
                 player.playAllShuffled(requireContext().repository.allTracks())
             }
             // Back to OFF: restore the queue we had before shuffling (resolve the snapshot's
             // track ids against the library, since Shuffle-All replaced the whole timeline).
-            ShuffleMode.OFF -> viewLifecycleOwner.lifecycleScope.launch {
+            ShuffleMode.OFF -> launchShuffleChange {
                 val byId = requireContext().repository.allTracks().associateBy { it.id }
                 val tracks = player.preShuffleQueueIds().mapNotNull { byId[it] }
                 player.disableShuffleRestoring(tracks)
             }
         }
         showModePopup(next.titleRes, next.subtitleRes)
+    }
+
+    private fun launchShuffleChange(block: suspend () -> Unit) {
+        shuffleCycleInFlight = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                block()
+            } finally {
+                shuffleCycleInFlight = false
+            }
+        }
+    }
+
+    /**
+     * Arm a folder advance to run once the swipe settles (see the settle handler), so the queue
+     * doesn't swap mid-fling. One place, so the three-flag latch can't be half-set.
+     *
+     * The queue generation is captured HERE, at the moment of the gesture — not when the deferred
+     * block finally runs. If the last track ends by itself during the fling, the service's own
+     * advance lands first; reading the generation late would see its NEW value, pass the staleness
+     * check and step a SECOND folder.
+     */
+    private fun armAdvance(forward: Boolean) {
+        advancing = true
+        advanceReady = false
+        val gen = requireContext().app.session.queueGeneration
+        pendingAdvance = { runAdvance(forward, gen) }
     }
 
     /** Same lightweight message system as enqueue (a Toast). */
@@ -489,54 +529,47 @@ class PlayerFragment : Fragment() {
         if (subRes != 0) { append('\n'); append(getString(subRes)) }
     })
 
-    /**
-     * Align the pager to the real queue [index] (shifted past any leading phantom). [animate]
-     * is false for structural moves (first open, resume, queue/phantom rebuilds) and true only
-     * for genuine track transitions, which get the card-flip animation.
-     */
     /** Page position of queue index [index]: with shuffle on the deck is [prev?, current,
      *  next?], so the only real page is the current one at [leadOffset]; otherwise pages
      *  mirror the timeline shifted past any leading phantom. */
     private fun pagePosOf(index: Int): Int =
-        if (player.currentShuffle() != ShuffleMode.OFF) leadOffset else index + leadOffset
+        if (player.state.value.shuffle != ShuffleMode.OFF) leadOffset else index + leadOffset
 
-    private fun syncPager(index: Int, animate: Boolean = pagerSynced) {
+    /**
+     * Align the pager to the real queue [index] (shifted past any leading phantom). [animate]
+     * is false for structural moves (first open, resume, queue/phantom rebuilds) and true only
+     * for genuine track transitions, which get the card-flip animation.
+     *
+     * [force] skips the gesture/advance gates, to land a folder advance by interrupting any
+     * residual fling. (It used to be a second near-copy of this function, which had already
+     * drifted — it omitted one of the two gates.)
+     */
+    private fun syncPager(index: Int, animate: Boolean, force: Boolean = false) {
         if (index < 0) return
-        // During a folder advance the pager position is owned by the advance (it stays on the
-        // phantom until finalizeAdvanceIfReady jumps it). A state-driven sync here would run
-        // before the queue rebuild and land on the OLD queue's index — a wrong-folder flash.
-        if (advancing) { dlog("sync($index) BLOCKED advancing"); return }
+        if (!force) {
+            // During a folder advance the pager position is owned by the advance (it stays on the
+            // phantom until finalizeAdvanceIfReady jumps it). A state-driven sync here would run
+            // before the queue rebuild and land on the OLD queue's index — a wrong-folder flash.
+            if (advancing) return
+            // Don't fight a gesture in progress — neither a horizontal drag/fling nor a held
+            // vertical drag; the settle handlers re-sync once at rest ([afterVerticalDrag]).
+            if (!pagerIdle || vDragging) return
+        }
         val pos = pagePosOf(index)
-        if (pos !in 0 until artAdapter.itemCount) { dlog("sync($index) BLOCKED range pos=$pos"); return }
-        // Don't fight a gesture in progress — neither a horizontal drag/fling nor a held
-        // vertical drag; the settle handlers re-sync once at rest ([afterVerticalDrag]).
-        if (!pagerIdle || vDragging) { dlog("sync($index) BLOCKED busy pos=$pos"); return }
+        if (pos !in 0 until artAdapter.itemCount) return
         // During a vertical folder jump the deck is off-screen: reposition by snapping — an
         // animated flip could still be mid-scroll when the deck slides back into view.
         if (b.artPager.currentItem != pos) {
-            dlog("sync($index) MOVE -> $pos")
-            b.artPager.setCurrentItem(pos, animate && !folderJumping)
+            b.artPager.setCurrentItem(pos, animate && !force && !folderJumping)
         }
         pagerSynced = true
     }
 
-    /** Jump straight to [index], interrupting any residual fling (used to land a folder advance). */
-    private fun forceSyncTo(index: Int) {
-        if (index < 0) return
-        val pos = pagePosOf(index)
-        dlog("forceSync($index) -> $pos")
-        if (pos in 0 until artAdapter.itemCount && b.artPager.currentItem != pos) {
-            b.artPager.setCurrentItem(pos, false)
-        }
-        pagerSynced = true
-    }
-
-    private fun bindQueue(items: List<QueueItem>) {
+    private fun bindQueue() {
         // If this queue change is the swipe-driven folder advance landing, take the pager
         // straight from the phantom onto the new song in one move (see [rebuildPages]).
         val landingAdvance = advancing
-        queueItems = items
-        // The shuffle phantoms are built FROM queueItems, so a queue change invalidates them.
+        // The shuffle phantoms are built FROM the queue, so a queue change invalidates them.
         phantomKey = null
         updatePhantom(player.state.value)
         rebuildPages(landingAdvance)
@@ -558,10 +591,11 @@ class PlayerFragment : Fragment() {
         // the finger and fire spurious selections) or a held vertical drag; the settle
         // handlers apply the deferred rebuild ([afterVerticalDrag]). A landing folder
         // advance is the exception — that swap is what the settle is waiting on.
-        if ((!pagerIdle || vDragging) && !landingAdvance) { dlog("rebuild DEFER"); pendingRebuild = true; return }
-        val current = queueItems.getOrNull(playerIndex)
-        val pages = ArrayList<QueueItem>(queueItems.size + 2)
-        if (player.currentShuffle() != ShuffleMode.OFF && current != null) {
+        if ((!pagerIdle || vDragging) && !landingAdvance) { pendingRebuild = true; return }
+        val items = queueItems
+        val current = items.getOrNull(playerIndex)
+        val pages = ArrayList<QueueItem>(items.size + 2)
+        if (player.state.value.shuffle != ShuffleMode.OFF && current != null) {
             // Shuffle: a 3-card deck — the song actually played before (if any), the current
             // song, and the upcoming shuffle pick (or the Advance-List folder fallback). A
             // missing neighbour means that swipe is impossible: no card, no gesture. All cards
@@ -571,7 +605,7 @@ class PlayerFragment : Fragment() {
             phantomNext?.let { pages.add(it) }
         } else {
             phantomPrev?.let { pages.add(it) }
-            pages.addAll(queueItems)
+            pages.addAll(items)
             phantomNext?.let { pages.add(it) }
         }
         // Mark the advance landing at SUBMIT time, not in the commit callback: AsyncListDiffer
@@ -580,9 +614,7 @@ class PlayerFragment : Fragment() {
         // With the flag set only in the cancelled callback, `advancing` stayed latched forever:
         // every pager sync blocked, deck parked on a neighbour's card (the wrong/blank cover).
         if (landingAdvance) advanceReady = true
-        dlog("rebuild SUBMIT n=${pages.size}")
         artAdapter.submitList(pages) {
-            dlog("rebuild COMMIT")
             // submitList commits asynchronously; the view may already be torn down by the time
             // this runs (rapid nav / rotation), so bail before touching b/requireActivity().
             if (_b == null) return@submitList
@@ -645,7 +677,7 @@ class PlayerFragment : Fragment() {
                 } else {
                     glideDeckTo(out) { slideOut.complete(Unit) }
                 }
-                val folder = (requireActivity() as MainActivity).jumpToNeighbourFolder(forward)
+                val folder = main.jumpToNeighbourFolder(forward)
                 if (folder == null) {
                     // No neighbour folder (or nothing playing): spring back from wherever the
                     // outgoing leg is; the finally below reveals the pager and drops the overlay.
@@ -665,11 +697,10 @@ class PlayerFragment : Fragment() {
                 // Bounded: the glide's onEnd never fires if another glide replaced it, and an
                 // unbounded await here would strand [folderJumping] and freeze the deck.
                 withTimeoutOrNull(SLIDE_MS * 3) { slideOut.await() }
-                dlog("jump slideOut done")
                 overlay?.let { b.deckWindow.removeView(it) }
                 // Land the hidden pager on the current song's page before revealing it, so the
                 // slide-in can only ever show the new folder's own art.
-                forceSyncTo(playerIndex)
+                syncPager(playerIndex, animate = false, force = true)
                 // Enter from the opposite edge with the new folder's art.
                 b.artPager.translationY = -out
                 b.artPager.visibility = View.VISIBLE
@@ -685,6 +716,12 @@ class PlayerFragment : Fragment() {
                     while (bb.deckWindow.childCount > 1) {
                         bb.deckWindow.removeViewAt(bb.deckWindow.childCount - 1)
                     }
+                    // Apply anything the held finger deferred. The COMMIT branch of
+                    // settleVerticalDrag doesn't run [afterVerticalDrag] (only the spring-back
+                    // does), so a rebuild deferred during the drag was stranded whenever the
+                    // jump turned out to be a no-op — leaving the deck on a stale page list
+                    // whose leadOffset no longer matched, which mis-decodes the next swipe.
+                    afterVerticalDrag()
                 }
             }
         }
@@ -716,10 +753,33 @@ class PlayerFragment : Fragment() {
         else glideDeckTo(0f) { afterVerticalDrag() }
     }
 
-    /** Apply deck work that was deferred while the finger held the pager. */
+    /** Apply deck work that was deferred while a gesture was in progress — the ONE
+     *  "settle the deck" policy, shared by the pager's idle handler and the drag release. */
     private fun afterVerticalDrag() {
         if (pendingRebuild) { pendingRebuild = false; rebuildPages() }
         else syncPager(playerIndex, animate = false)
+    }
+
+    /**
+     * Latch the pager busy for a programmatic smooth scroll, with a bounded recovery.
+     *
+     * The matching SCROLL_STATE_IDLE only arrives while the pager keeps getting animation
+     * frames, and a smooth scroll begun as the window stops drawing (screen off, a dialog over
+     * the player) never delivers one. Every deck mutation is gated on [pagerIdle], so the deck
+     * would sit frozen on a neighbour's cover — rebuilds piling into [pendingRebuild] — until the
+     * next touch happened to reset it.
+     */
+    private fun markPagerBusy() {
+        pagerIdle = false
+        b.artPager.removeCallbacks(pagerIdleHeal)
+        b.artPager.postDelayed(pagerIdleHeal, PAGER_SETTLE_TIMEOUT_MS)
+    }
+
+    private val pagerIdleHeal = Runnable {
+        val bb = _b ?: return@Runnable
+        if (pagerIdle || bb.artPager.scrollState != ViewPager2.SCROLL_STATE_IDLE) return@Runnable
+        pagerIdle = true
+        afterVerticalDrag()
     }
 
     /**
@@ -758,13 +818,13 @@ class PlayerFragment : Fragment() {
      * nothing playing), no queue change arrives to finalize it — so abandon it here, otherwise
      * [advancing] would stay set forever and freeze the pager.
      */
-    private fun runAdvance(forward: Boolean) {
+    private fun runAdvance(forward: Boolean, expectedGen: Int) {
         viewLifecycleOwner.lifecycleScope.launch {
             // A throwing advanceFolder (detached activity, repository error) would otherwise
             // leave [advancing] set forever and freeze the deck — treat failure as a no-op.
             advanceInFlight = true
             val advanced = try {
-                (requireActivity() as MainActivity).advanceFolder(forward)
+                main.advanceFolder(forward, expectedGen)
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -793,7 +853,7 @@ class PlayerFragment : Fragment() {
         if (!advancing || !advanceReady || !pagerIdle) return
         advancing = false
         advanceReady = false
-        forceSyncTo(playerIndex)
+        syncPager(playerIndex, animate = false, force = true)
     }
 
     /** Synthetic phantom page carrying a neighbour folder song's art + id (id keeps it unique). */
@@ -831,7 +891,7 @@ class PlayerFragment : Fragment() {
             // Shuffle exhausted: with Advance-List the deck still ends on the next-folder card.
             if (phantomNext == null && s.repeat == RepeatMode.ADVANCE && dir.isNotEmpty()) {
                 viewLifecycleOwner.lifecycleScope.launch {
-                    val (_, next) = (requireActivity() as MainActivity).neighbourFolderSongs()
+                    val (_, next) = main.neighbourFolderSongs()
                     if (phantomKey != key) return@launch
                     phantomNext = next?.let { phantomOf(it, PHANTOM_NEXT_INDEX) }
                     rebuildPages()
@@ -849,12 +909,11 @@ class PlayerFragment : Fragment() {
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
-            val (prev, next) = (requireActivity() as MainActivity).neighbourFolderSongs()
+            val (prev, next) = main.neighbourFolderSongs()
             // A newer state may have changed the target folder while we were computing.
             if (phantomKey != key) return@launch
             phantomNext = next?.let { phantomOf(it, PHANTOM_NEXT_INDEX) }
             phantomPrev = prev?.let { phantomOf(it, PHANTOM_PREV_INDEX) }
-            dlog("phantom recompute landed")
             rebuildPages()
         }
     }
@@ -867,11 +926,11 @@ class PlayerFragment : Fragment() {
             // (already told by the song info below the deck).
             val dir = s.filePath.substringBeforeLast('/', "")
             viewLifecycleOwner.lifecycleScope.launch {
-                val title = (requireActivity() as MainActivity).libraryRelativePath(dir) ?: ""
+                val title = main.libraryRelativePath(dir) ?: ""
                 // A newer song may have bound while the root was being looked up.
                 if (_b != null && currentFilePath == s.filePath) {
                     // Long paths marquee once (and again on tap) instead of ellipsizing.
-                    (requireActivity() as MainActivity).setMarqueeTitle(title)
+                    main.setMarqueeTitle(title)
                 }
             }
         }
@@ -904,7 +963,7 @@ class PlayerFragment : Fragment() {
                         b.artPager.setCurrentItem(target, animate)
                         // The SETTLING event may arrive after updatePhantom below would run —
                         // mark the pager busy NOW so the deck rebuild defers to the settle.
-                        if (animate) pagerIdle = false
+                        if (animate) markPagerBusy()
                     }
                     pagerSynced = true
                 }
@@ -928,26 +987,24 @@ class PlayerFragment : Fragment() {
 
         // Marquee the title only when it actually changes (bind runs every position tick, and
         // re-setting would restart the scroll from the top each time).
-        val titleText = if (s.hasItem) s.title.ifBlank { getString(R.string.app_name) }
-        else getString(R.string.nothing_playing)
+        val titleText = if (s.hasItem) s.displayTitle else getString(R.string.nothing_playing)
         if (titleText != boundTitle) {
             boundTitle = titleText
             titleMarquee?.set(titleText)
         }
-        b.subtitle.text = if (s.hasItem) Format.subtitle(s.artist, s.album) else ""
-
-        b.play.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)
-        b.shuffle.setImageResource(s.shuffle.iconRes)
-        b.repeat.setImageResource(s.repeat.iconRes)
-
-        b.audioInfo.text = if (s.hasItem) Format.audioInfo(s.sampleRateHz, s.bitrateBps, s.filePath) else ""
-
-        b.duration.text = Format.clock(s.durationMs)
-        b.seek.max = s.durationMs.toInt().coerceAtLeast(1)
-        if (!userSeeking) {
-            b.seek.progress = s.positionMs.toInt().coerceIn(0, b.seek.max)
-            b.position.text = Format.clock(s.positionMs)
+        val prev = lastBound
+        if (prev == null || s.hasItem != prev.hasItem || s.artist != prev.artist || s.album != prev.album) {
+            c.subtitle.text = if (s.hasItem) Format.subtitle(s.artist, s.album) else ""
         }
+        if (prev == null || s.shuffle != prev.shuffle) c.shuffle.setImageResource(s.shuffle.iconRes)
+        if (prev == null || s.repeat != prev.repeat) c.repeat.setImageResource(s.repeat.iconRes)
+        if (prev == null || s.hasItem != prev.hasItem || s.sampleRateHz != prev.sampleRateHz ||
+            s.bitrateBps != prev.bitrateBps || s.filePath != prev.filePath
+        ) {
+            c.audioInfo.text = if (s.hasItem) Format.audioInfo(s.sampleRateHz, s.bitrateBps, s.filePath) else ""
+        }
+        transport.bind(s, prev)
+        lastBound = s
 
         // Track the live-transition sequence so the NEXT bind can tell a genuine transition
         // (sequence advanced) from a re-sync of the same state (sequence unchanged).
@@ -956,6 +1013,7 @@ class PlayerFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        _b?.artPager?.removeCallbacks(pagerIdleHeal)
         titleMarquee?.stop()
         titleMarquee = null
         _b = null
@@ -964,6 +1022,10 @@ class PlayerFragment : Fragment() {
     companion object {
         /** Duration of each half of the vertical folder-jump slide (out, then in). */
         private const val SLIDE_MS = 180L
+
+        /** Upper bound on waiting for a programmatic smooth scroll to report IDLE (see
+         *  [markPagerBusy]) before the deck un-gates itself anyway. */
+        private const val PAGER_SETTLE_TIMEOUT_MS = 1_000L
 
         /** Release velocity (dp/s) that commits a folder jump even with little travel. */
         private const val COMMIT_FLING_DP_S = 300f

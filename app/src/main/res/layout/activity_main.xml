@@ -3,8 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/pa_window">
+    android:orientation="vertical">
 
     <!-- Height grows to fit a two-line title+subtitle (long folder breadcrumbs), which a
          fixed 56dp clips at the descenders; single-line screens stay at the min height. -->

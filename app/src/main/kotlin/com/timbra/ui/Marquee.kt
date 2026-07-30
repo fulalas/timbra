@@ -30,6 +30,15 @@ class TitleMarquee(private val tv: TextView) {
     /** The clean (single) string, so a re-run never doubles an already-doubled text. */
     private var text: String = ""
 
+    /**
+     * Bumped by every [set]/[scrollOnce]/[stop]. [scrollOnce] defers all its work into a
+     * `doOnLayout` block that cannot be un-registered, so without this a run started for one
+     * screen fired AFTER [stop] and overwrote the (SHARED, in the toolbar's case) TextView with
+     * the previous screen's doubled title — which then kept scrolling, since the runnable's own
+     * guards were both satisfied.
+     */
+    private var epoch = 0
+
     /** Set the text and marquee it once when it doesn't fit; ellipsizing is dropped (it would
      *  shrink the layout we scroll). Safe to call every frame only if the text is unchanged —
      *  a genuinely new string restarts the loop, so callers should guard on change. */
@@ -48,6 +57,7 @@ class TitleMarquee(private val tv: TextView) {
      * so restoring the single string here would only risk clobbering the next screen's title.
      */
     fun stop() {
+        epoch++
         scroll = null
         tv.setHorizontallyScrolling(false)
         tv.ellipsize = TextUtils.TruncateAt.END
@@ -69,9 +79,12 @@ class TitleMarquee(private val tv: TextView) {
      */
     fun scrollOnce() {
         scroll = null
+        val startedAt = ++epoch
         tv.text = text // reset in case a prior interrupted run left it doubled
         tv.scrollTo(0, 0)
         tv.doOnLayout {
+            // Superseded (a newer set/scrollOnce, or stop()) while waiting for the layout pass.
+            if (epoch != startedAt) return@doOnLayout
             val viewport = tv.width - tv.paddingLeft - tv.paddingRight
             val lineWidth = tv.paint.measureText(text)
             if (lineWidth <= viewport) { scroll = null; return@doOnLayout } // fits — no scroll

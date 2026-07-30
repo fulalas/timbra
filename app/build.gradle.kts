@@ -15,9 +15,9 @@ android {
         minSdk = 24
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
-        // app (Library toolbar subtitle) and in the output APK filename.
-        versionCode = 118
-        versionName = "0.7.42"
+        // app (Library → overflow → About) and in the output APK filename.
+        versionCode = 120
+        versionName = "0.7.44"
 
         // Generate R.string.app_name from `appName` so the name isn't duplicated in strings.xml.
         resValue("string", "app_name", appName)
@@ -77,7 +77,6 @@ dependencies {
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")
-    implementation("androidx.media3:media3-ui:$media3")
     implementation("androidx.media3:media3-common:$media3")
 
     // FFmpeg-backed decoders for Media3 (wide format support, all ABIs incl. arm64).
@@ -93,7 +92,6 @@ dependencies {
     implementation("androidx.viewpager2:viewpager2:1.1.0")
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.google.guava:guava:33.3.1-android")
 }

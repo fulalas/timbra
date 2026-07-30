@@ -1,15 +1,14 @@
 package com.timbra.ui
 
-import android.content.ContentUris
 import android.content.Intent
 import android.net.Uri
-import android.provider.MediaStore
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.timbra.R
+import com.timbra.data.MediaRepository
 import com.timbra.data.model.Track
 import com.timbra.player.QueueItem
+import com.timbra.ui.dialogs.Dialogs
 
 /**
  * Long-press context menu for a track or folder: Enqueue (play next, FIFO),
@@ -26,17 +25,14 @@ object ItemActions {
             ctx.getString(R.string.menu_share),
             ctx.getString(R.string.menu_delete),
         )
-        AlertDialog.Builder(ctx)
-            .setTitle(label)
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> enqueue(fragment, tracks)
-                    1 -> showInfo(fragment, tracks)
-                    2 -> share(fragment, tracks)
-                    3 -> confirmDelete(fragment, tracks)
-                }
+        Dialogs.actions(ctx, label, options) { which ->
+            when (which) {
+                0 -> enqueue(fragment, tracks)
+                1 -> showInfo(fragment, tracks)
+                2 -> share(fragment, tracks)
+                3 -> confirmDelete(fragment, tracks)
             }
-            .show()
+        }
     }
 
     /** Queue-screen context menu: Info / Share / Remove (removes from queue, not from disk). */
@@ -47,40 +43,43 @@ object ItemActions {
             ctx.getString(R.string.menu_share),
             ctx.getString(R.string.menu_remove),
         )
-        AlertDialog.Builder(ctx)
-            .setTitle(item.title.ifBlank { item.filePath.substringAfterLast('/') })
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> showQueueInfo(fragment, item)
-                    1 -> shareUris(fragment, listOf(queueUri(item)))
-                    2 -> onRemove()
-                }
+        Dialogs.actions(ctx, item.displayTitle, options) { which ->
+            when (which) {
+                0 -> infoDialog(
+                    fragment,
+                    infoBody(item.displayTitle, item.artist, item.album, item.filePath),
+                )
+                1 -> shareUris(fragment, listOf(MediaRepository.trackUri(item.mediaId)))
+                2 -> onRemove()
             }
-            .show()
+        }
     }
 
-    private fun queueUri(item: QueueItem): Uri =
-        ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, item.mediaId)
-
-    private fun showQueueInfo(fragment: Fragment, item: QueueItem) {
-        infoDialog(fragment, buildString {
-            appendLine("Title: ${item.title.ifBlank { item.filePath.substringAfterLast('/') }}")
-            appendLine("Artist: ${item.artist.ifBlank { "—" }}")
-            appendLine("Album: ${item.album.ifBlank { "—" }}")
-            appendLine("Path: ${item.filePath}")
-        })
+    /** The Info dialog body; track-only lines (number, duration) are included when known. */
+    private fun infoBody(
+        title: String,
+        artist: String,
+        album: String,
+        path: String,
+        trackNo: Int = 0,
+        discNo: Int = 0,
+        durationMs: Long = 0,
+    ): String = buildString {
+        appendLine("Title: $title")
+        appendLine("Artist: ${artist.ifBlank { "—" }}")
+        appendLine("Album: ${album.ifBlank { "—" }}")
+        if (discNo > 0) appendLine("Disc: $discNo")
+        if (trackNo > 0) appendLine("Track: $trackNo")
+        if (durationMs > 0) appendLine("Duration: ${Format.clock(durationMs)}")
+        appendLine("Path: $path")
     }
 
     private fun infoDialog(fragment: Fragment, body: String) {
-        AlertDialog.Builder(fragment.requireContext())
-            .setTitle(R.string.menu_info)
-            .setMessage(body.trim())
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        Dialogs.message(fragment.requireContext(), R.string.menu_info, body.trim())
     }
 
     private fun enqueue(fragment: Fragment, tracks: List<Track>) {
-        (fragment.requireActivity() as MainActivity).player.enqueueNext(tracks)
+        fragment.player.enqueueNext(tracks)
         val label = tracks.firstOrNull()?.let {
             if (tracks.size == 1) it.displayTitle else "${tracks.size} songs"
         } ?: return
@@ -93,15 +92,11 @@ object ItemActions {
 
     private fun showInfo(fragment: Fragment, tracks: List<Track>) {
         val t = tracks.first()
-        infoDialog(fragment, buildString {
-            appendLine("Title: ${t.displayTitle}")
-            appendLine("Artist: ${t.artist.ifBlank { "—" }}")
-            appendLine("Album: ${t.album.ifBlank { "—" }}")
-            if (t.trackNo > 0) appendLine("Track: ${t.trackNo}")
-            appendLine("Duration: ${Format.clock(t.durationMs)}")
-            appendLine("Path: ${t.path}")
-            if (tracks.size > 1) appendLine("\n(${tracks.size} files selected)")
-        })
+        val body = infoBody(
+            t.displayTitle, t.artist, t.album, t.path, t.trackNo, t.discNo, t.durationMs,
+        )
+        val suffix = if (tracks.size > 1) "\n(${tracks.size} files selected)" else ""
+        infoDialog(fragment, body + suffix)
     }
 
     private fun share(fragment: Fragment, tracks: List<Track>) = shareUris(fragment, tracks.map { it.uri })
@@ -122,13 +117,8 @@ object ItemActions {
         val ctx = fragment.requireContext()
         val msg = if (tracks.size == 1) ctx.getString(R.string.delete_confirm)
         else ctx.getString(R.string.delete_confirm_many, tracks.size)
-        AlertDialog.Builder(ctx)
-            .setTitle(R.string.menu_delete)
-            .setMessage(msg)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(R.string.menu_delete) { _, _ ->
-                (fragment.requireActivity() as MainActivity).requestDelete(tracks.map { it.uri })
-            }
-            .show()
+        Dialogs.confirm(ctx, R.string.menu_delete, msg, R.string.menu_delete) {
+            (fragment.requireActivity() as MainActivity).requestDelete(tracks.map { it.uri })
+        }
     }
 }
