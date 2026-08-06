@@ -18,7 +18,8 @@ that look and feel as original code on a modern stack.
 
 - **Folder-first browsing** — a virtual folder tree built from file paths.
 - **Full library** — Folders, Albums, Artists, All Songs, Genres, Playlists, and the play
-  Queue.
+  Queue. (Genres and Playlists come from legacy MediaStore tables that Android 11+ often leaves
+  sparse or empty — that is the OS, not a missing feature.)
 - **Wide format support** — FFmpeg-backed decoders play far more formats than Android's
   native codecs.
 - **Gapless & background playback** — keeps playing with lock-screen, notification, and
@@ -58,10 +59,21 @@ pre-installed SDK required; the FFmpeg decoders come prebuilt inside the nextlib
 
 ```bash
 ./build.sh                  # assembleRelease (default)
-./build.sh assembleDebug    # debug variant
+./build.sh --no-install     # build but leave the device alone
+./build.sh assembleDebug    # debug variant, written as timbra-<version>-debug.apk
 
 # To use an existing toolchain instead, point TIMBRA_ENV at an env script to source:
 TIMBRA_ENV=/path/to/toolchain/env.sh ./build.sh
+```
+
+The debug variant gets its own filename because it is signed with the default debug key: it cannot
+be installed over a release build (Android rejects the signature change), and sharing one filename
+would let it quietly replace the release APK at the repo root.
+
+Unit tests need no device:
+
+```bash
+gradle testReleaseUnitTest
 ```
 
 Toolchain resolution order: `$TIMBRA_ENV` → `./toolchain/env.sh` → `../toolchain/env.sh`
@@ -87,7 +99,8 @@ Pass `--clean` for a fresh install (uninstall + install).
 
 ## Roadmap
 
-Not yet implemented: lyrics, theme switching.
+Not yet implemented: settings screen, home-screen widgets, lyrics, theme switching, SAF
+filesystem browsing.
 
 ## License
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.data.model
 
 import android.net.Uri
@@ -54,8 +55,14 @@ class FolderNode(
 
     val childFolders: List<FolderNode> get() = subFolders.values.toList()
 
-    /** Total tracks in this node and all descendants (computed once, lazily). */
-    val totalTrackCount: Int by lazy {
-        tracks.size + subFolders.values.sumOf { it.totalTrackCount }
-    }
+    /**
+     * Total tracks in this node and all descendants.
+     *
+     * Filled in by [com.timbra.data.FolderTreeBuilder.build] in one explicit pass once the tree
+     * is complete — NOT a `by lazy`. Both [tracks] and [subFolders] are populated after the node
+     * is constructed, so a lazy value read mid-build would memoise a partial count and freeze it
+     * for the object's lifetime, with no way to invalidate it.
+     */
+    var totalTrackCount: Int = 0
+        internal set
 }

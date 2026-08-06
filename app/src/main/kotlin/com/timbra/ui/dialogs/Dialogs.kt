@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.dialogs
 
 import android.content.Context

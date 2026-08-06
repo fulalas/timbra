@@ -25,7 +25,8 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="?attr/selectableItemBackground"
-        android:paddingVertical="2dp">
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp">
 
         <TextView
             android:id="@+id/title"
@@ -128,7 +129,8 @@
             android:layout_height="@dimen/pa_transport_play"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:scaleType="fitCenter"
-            android:layout_marginHorizontal="@dimen/pa_transport_play_margin"
+            android:layout_marginStart="@dimen/pa_transport_play_margin"
+            android:layout_marginEnd="@dimen/pa_transport_play_margin"
             android:src="@drawable/deck_play"
             android:contentDescription="@string/cd_play" />
 

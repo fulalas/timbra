@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.queue
 
 import android.annotation.SuppressLint
@@ -6,6 +7,7 @@ import android.view.MotionEvent
 import android.view.ViewGroup
 import androidx.core.view.isInvisible
 import androidx.lifecycle.LifecycleOwner
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.timbra.R
 import com.timbra.data.MediaRepository
@@ -31,19 +33,36 @@ class QueueAdapter(
             if (field == value) return
             val old = field
             field = value
-            // Only rows whose visuals depend on the index that moved change: the highlight on
-            // the two endpoints, and the played-dim on everything the index stepped across.
-            // Rebinding the whole list would reload every visible row's art per transition.
-            val lo = minOf(old, value)
-            val hi = maxOf(old, value)
-            items.forEachIndexed { pos, item ->
-                if (item.timelineIndex in lo..hi) notifyItemChanged(pos)
-            }
+            // ONLY the two rows whose highlight moves. Notifying the whole min..max span in
+            // TIMELINE-INDEX space was far worse than it looks: with old == -1 it covered every row
+            // up to the new index, and under shuffle consecutive songs are arbitrarily far apart in
+            // timeline order, so nearly every transition rebound most of the queue — thousands of
+            // notifyItemChanged calls on the main thread per song change. The played-dim rides
+            // along with the next submit(), which is where `played` actually changes.
+            notifyRowFor(old)
+            notifyRowFor(value)
         }
 
+    private fun notifyRowFor(timelineIndex: Int) {
+        if (timelineIndex < 0) return
+        val pos = items.indexOfFirst { it.timelineIndex == timelineIndex }
+        if (pos >= 0) notifyItemChanged(pos)
+    }
+
     fun submit(list: List<QueueItem>) {
+        // A real diff, not notifyDataSetChanged(): PlayerConnection re-emits the queue on every
+        // timeline change (and after markCurrentEnqueuedPlayed), so a blanket invalidation rebound
+        // every visible row — re-issuing an ArtLoader.load per row and dropping item animations and
+        // drag state. The sibling ArtPagerAdapter is DiffUtil-backed for exactly this reason.
+        val old = items
         items = list
-        notifyDataSetChanged()
+        DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = old.size
+            override fun getNewListSize() = list.size
+            override fun areItemsTheSame(o: Int, n: Int) =
+                old[o].mediaId == list[n].mediaId && old[o].timelineIndex == list[n].timelineIndex
+            override fun areContentsTheSame(o: Int, n: Int) = old[o] == list[n]
+        }).dispatchUpdatesTo(this)
     }
 
     fun currentItems(): List<QueueItem> = items

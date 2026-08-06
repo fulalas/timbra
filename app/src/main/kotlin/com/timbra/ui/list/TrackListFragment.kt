@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.list
 
 import android.os.Bundle
@@ -19,6 +20,7 @@ import com.timbra.data.SortDefaults
 import com.timbra.data.SortOrder
 import com.timbra.data.sortedBy
 import com.timbra.data.model.Track
+import com.timbra.player.enumByName
 import com.timbra.databinding.FragmentListBinding
 import com.timbra.repository
 import com.timbra.ui.ItemActions
@@ -28,6 +30,7 @@ import com.timbra.ui.player
 import com.timbra.ui.reloadOnLibraryChange
 import com.timbra.ui.trackNowPlaying
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -55,6 +58,9 @@ class TrackListFragment : Fragment(), MenuProvider {
      */
     private var playable: List<Track> = emptyList()
 
+    /** The in-flight [load]; replacing it cancels the old one, so only the newest build commits. */
+    private var loadJob: Job? = null
+
     private val isTrackMode: Boolean get() = kind in TRACK_KINDS
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
@@ -66,7 +72,11 @@ class TrackListFragment : Fragment(), MenuProvider {
         kind = requireArguments().getString("listKind", KIND_SONGS)
         listId = requireArguments().getLong("listId", -1L)
         listTitle = requireArguments().getString("listTitle", getString(R.string.library))
-        sortOrder = defaultSortFor(kind)
+        // Restored across rotation and back-stack returns; FolderSort's doc calls out losing a
+        // sort choice that way as a bug, and this screen had it too.
+        sortOrder = savedInstanceState?.getString(STATE_SORT)
+            ?.let { enumByName(it, defaultSortFor(kind)) }
+            ?: defaultSortFor(kind)
 
         (requireActivity() as AppCompatActivity).supportActionBar?.title = listTitle
 
@@ -90,7 +100,11 @@ class TrackListFragment : Fragment(), MenuProvider {
     }
 
     private fun load() {
-        viewLifecycleOwner.lifecycleScope.launch {
+        // Cancel the build already running: the sort dialog and the library-epoch reload both call
+        // this, and an older, slower whole-library sort could otherwise commit last and pair stale
+        // rows with a stale `playable` list — a tap then plays a different song.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val repo = requireContext().repository
             // Resolved on the main thread while the fragment is definitely attached: the row
             // mapping below runs on Dispatchers.Default, and Fragment.getString() there would
@@ -145,7 +159,10 @@ class TrackListFragment : Fragment(), MenuProvider {
     ): Built = Built(
         entries.map { entry ->
             val (id, label, count) = info(entry)
-            ListItem.NavRow(label, res.getString(R.string.song_count, count), iconRes, kind, id, label)
+            ListItem.NavRow(
+                label, res.getQuantityString(R.plurals.song_count, count, count),
+                iconRes, kind, id, label,
+            )
         },
         emptyList(),
     )
@@ -176,12 +193,19 @@ class TrackListFragment : Fragment(), MenuProvider {
         else -> false
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::sortOrder.isInitialized) outState.putString(STATE_SORT, sortOrder.name)
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _b = null
     }
 
     companion object {
+        private const val STATE_SORT = "sortOrder"
+
         private val TRACK_KINDS = setOf(KIND_SONGS, KIND_ALBUM, KIND_ARTIST, KIND_GENRE, KIND_PLAYLIST)
 
         const val KIND_SONGS = "songs"

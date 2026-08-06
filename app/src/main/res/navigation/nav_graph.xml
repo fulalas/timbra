@@ -17,10 +17,13 @@
             android:name="folderPath"
             app:argType="string"
             android:defaultValue="" />
+        <!-- Empty, not the literal "Folders": NavInflater rejects @string/... for a string
+             arg's default (a startup crash), so FolderTreeFragment falls back to the localised
+             label when this comes through blank. -->
         <argument
             android:name="folderTitle"
             app:argType="string"
-            android:defaultValue="Folders" />
+            android:defaultValue="" />
     </fragment>
 
     <fragment

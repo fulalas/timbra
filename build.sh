@@ -149,7 +149,10 @@ NAME_LC=$(echo "${NAME:-app}" | tr '[:upper:]' '[:lower:]')
 TASK="${TASK:-assembleRelease}"
 log "Building $NAME ($TASK)"
 cd "$DIR"
-"$GRADLE" "$TASK" --no-daemon
+# The Gradle daemon is left ON by default: --no-daemon costs a fresh JVM and a full configuration
+# phase (10-30s) on every run, which fights org.gradle.caching and the "bump the version and
+# rebuild on EVERY change" workflow. Set TIMBRA_GRADLE_FLAGS=--no-daemon for a one-shot/CI build.
+"$GRADLE" "$TASK" ${TIMBRA_GRADLE_FLAGS:-}
 
 # Copy the built APK to the repo root, named "<app>-<version>.apk" (single sources of
 # truth: appName in gradle.properties, versionName in app/build.gradle.kts).
@@ -159,11 +162,22 @@ case "$TASK" in
     *[Rr]elease*) VARIANT=release ;;
     *) VARIANT=debug ;;
 esac
-BUILT=$(find "$DIR/app/build/outputs/apk/$VARIANT" -name '*.apk' 2>/dev/null | head -1)
+# `|| true`: under `set -eo pipefail` a missing output dir makes find exit non-zero, pipefail
+# propagates it and the script died right after a SUCCESSFUL build — with the `if [ -n "$BUILT" ]`
+# guard below (written for exactly that case) unreachable.
+BUILT=$(find "$DIR/app/build/outputs/apk/$VARIANT" -name '*.apk' 2>/dev/null | head -1 || true)
 if [ -n "$BUILT" ]; then
     # Remove older root APKs so only the current version stays at the root.
-    find "$DIR" -maxdepth 1 -name "${NAME_LC}-*.apk" -delete
-    OUT="$DIR/${NAME_LC}-${VERSION:-unknown}.apk"
+    find "$DIR" -maxdepth 1 -name "${NAME_LC}-*.apk" ! -name "*-debug.apk" -delete
+    [ "$VARIANT" = release ] || find "$DIR" -maxdepth 1 -name "${NAME_LC}-*-${VARIANT}.apk" -delete
+    # The VARIANT is in the debug filename: without it a debug build silently replaced the release
+    # `<app>-<version>.apk` (the delete above removed it first) with an APK signed by the debug key,
+    # which then cannot be installed over a release build at all.
+    if [ "$VARIANT" = release ]; then
+        OUT="$DIR/${NAME_LC}-${VERSION:-unknown}.apk"
+    else
+        OUT="$DIR/${NAME_LC}-${VERSION:-unknown}-${VARIANT}.apk"
+    fi
     cp -f "$BUILT" "$OUT"
     echo
     log "APK output"

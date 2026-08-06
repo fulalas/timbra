@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.data
 
 import com.timbra.data.model.FolderNode
@@ -29,7 +30,19 @@ object FolderTreeBuilder {
             }
             node.tracks.add(track)
         }
-        return collapseSingleChildChains(root)
+        val collapsed = collapseSingleChildChains(root)
+        // One explicit bottom-up pass now that every node is populated (see
+        // FolderNode.totalTrackCount for why this isn't a `by lazy` on the node).
+        computeTotals(collapsed)
+        return collapsed
+    }
+
+    /** Fill in [FolderNode.totalTrackCount] for [node] and every descendant; returns its total. */
+    private fun computeTotals(node: FolderNode): Int {
+        var total = node.tracks.size
+        for (child in node.subFolders.values) total += computeTotals(child)
+        node.totalTrackCount = total
+        return total
     }
 
     /** Collapse leading chains like /storage/emulated/0/Music -> Music root. */

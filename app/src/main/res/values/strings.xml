@@ -57,11 +57,30 @@
     <string name="menu_share">Share</string>
     <string name="enqueued">Enqueued: %1$s</string>
     <string name="delete_confirm">Delete this file permanently?</string>
-    <string name="delete_confirm_many">Delete %1$d files permanently?</string>
+    <plurals name="delete_confirm_many">
+        <item quantity="one">Delete %1$d file permanently?</item>
+        <item quantity="other">Delete %1$d files permanently?</item>
+    </plurals>
+    <string name="delete_failed">Could not delete %1$d file(s).</string>
     <string name="cat_queue">Queue</string>
     <string name="queue_empty">Queue is empty.\nLong-press a song or folder and choose Enqueue.</string>
     <string name="menu_clear_queue">Clear Queue</string>
     <string name="clear_queue_confirm">Clear the entire queue?</string>
+
+    <!-- Info / Tags dialog -->
+    <string name="info_none">—</string>
+    <string name="info_title">Title: %1$s</string>
+    <string name="info_artist">Artist: %1$s</string>
+    <string name="info_album">Album: %1$s</string>
+    <string name="info_disc">Disc: %1$d</string>
+    <string name="info_track">Track: %1$d</string>
+    <string name="info_duration">Duration: %1$s</string>
+    <string name="info_path">Path: %1$s</string>
+
+    <!-- Permission -->
+    <string name="perm_needed_title">Permission needed</string>
+    <string name="perm_needed_body">Timbra needs access to your audio files to show your library. Grant the permission in Settings and reopen the app.</string>
+    <string name="perm_open_settings">Open settings</string>
 
     <!-- Equalizer -->
     <string name="menu_equalizer">Equalizer</string>
@@ -81,7 +100,7 @@
 
     <!-- About -->
     <string name="menu_about">About</string>
-    <string name="about_body">Version %1$s (build %2$d)\nPackage: %3$s\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\n• Audio engine: Media3 / ExoPlayer with FFmpeg decoders (wide format support, all ABIs incl. arm64)\n• Folder-hierarchy browsing, full library, gapless playback, background playback\n\nBuilt with Kotlin.</string>
+    <string name="about_body">Version %1$s (build %2$d)\nPackage: %3$s\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\n• Audio engine: Media3 / ExoPlayer with FFmpeg decoders (wide format support, all ABIs incl. arm64)\n• Folder-hierarchy browsing, full library, gapless playback, background playback\n\nBuilt with Kotlin.\n\nFree software under the GNU General Public License v3.0 or later. Bundled libraries keep their own licenses (Apache-2.0; FFmpeg under LGPL/GPL).</string>
     <string name="cd_album_art">Album art</string>
 
     <!-- Misc -->
@@ -89,5 +108,18 @@
     <string name="unknown_album">Unknown album</string>
     <string name="nothing_playing">Nothing playing</string>
     <string name="empty_folder">No audio here</string>
-    <string name="song_count">%1$d songs</string>
+    <!-- Quantity strings. A fixed plural form rendered "1 songs" on every single-track folder
+         and index row, which is not an edge case here. -->
+    <plurals name="song_count">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
+    <plurals name="n_songs">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
+    <plurals name="n_files_selected">
+        <item quantity="one">(%1$d file selected)</item>
+        <item quantity="other">(%1$d files selected)</item>
+    </plurals>
 </resources>

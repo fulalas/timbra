@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra
 
 import android.app.Application
@@ -9,6 +10,7 @@ import com.timbra.player.PlaybackSession
 import com.timbra.player.PlaybackStateStore
 import com.timbra.ui.ArtLoader
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 
 class TimbraApp : Application() {
     val repository: MediaRepository by lazy { MediaRepository(this) }
@@ -36,7 +38,11 @@ class TimbraApp : Application() {
     fun refreshLibrary() {
         repository.invalidate()
         ArtLoader.invalidate()
-        libraryEpoch.value += 1
+        // update {}, not `value += 1`: the latter is a read-modify-write, so two overlapping
+        // refreshes (a permission grant and a rescan signal landing together) could collapse into
+        // one increment — and since every screen's reload is gated on the epoch CHANGING, the
+        // second refresh would be silently dropped and the list left stale.
+        libraryEpoch.update { it + 1 }
     }
 }
 

@@ -11,6 +11,9 @@
     <!-- Cool blue-white glow accent taken from the matte skin highlights. -->
     <color name="pa_accent">#C5CAE9</color>
     <color name="pa_accent_glow">#8C9EFF</color>
+    <!-- Zero-alpha accent. Gradient stops interpolate non-premultiplied, so fading to
+         pa_transparent (#00000000) darkened and desaturated the fade instead of tapering. -->
+    <color name="pa_accent_glow_fade">#008C9EFF</color>
     <color name="pa_accent_dim">#3A4A66</color>
 
     <color name="pa_text_primary">#EDEDED</color>

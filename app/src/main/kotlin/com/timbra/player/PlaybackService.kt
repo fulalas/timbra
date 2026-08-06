@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import android.content.Context
@@ -142,6 +143,10 @@ class PlaybackService : MediaSessionService() {
                 /* handleAudioFocus = */ true,
             )
             .setHandleAudioBecomingNoisy(true)
+            // Matches the WAKE_LOCK permission the manifest declares: without this the
+            // permission bought nothing, and long playback with the screen off is exposed to
+            // doze-related stalls. WAKE_MODE_LOCAL is the right mode for on-device files.
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
         exoPlayer = player
 
@@ -287,8 +292,10 @@ class PlaybackService : MediaSessionService() {
             if (player.hasPreviousMediaItem()) return false
             if (player.currentPosition > player.maxSeekToPreviousPosition) return false
         }
-        advanceFolder(player, forward)
-        return true
+        // The return value matters: advanceFolder has its own early exits (nothing playing, an
+        // item with no path), and claiming the command without acting on it left Next/Previous
+        // silently dead instead of falling through to super.
+        return advanceFolder(player, forward)
     }
 
     /**
@@ -378,7 +385,15 @@ class PlaybackService : MediaSessionService() {
             advanceFolder(player, forward = true) { !player.isPlaying }
             return
         }
-        if (errorSkips >= MAX_ERROR_SKIPS.coerceAtMost(player.mediaItemCount)) return
+        if (errorSkips >= MAX_ERROR_SKIPS.coerceAtMost(player.mediaItemCount)) {
+            // Give up, but in a COHERENT state. Returning here left ExoPlayer IDLE holding the
+            // error with playWhenReady still set: the notification kept claiming playback, nothing
+            // could advance, and errorSkips could never clear (only STATE_READY resets it, which
+            // can no longer happen) — the frozen transport this whole method exists to prevent.
+            errorSkips = 0
+            player.pause()
+            return
+        }
         errorSkips++
         val resume = player.playWhenReady
         player.seekTo(next, 0L)
@@ -538,7 +553,11 @@ class PlaybackService : MediaSessionService() {
         // any) are the whole remainder.
         val chosen = if (unplayed.isEmpty()) emptyList() else listOf(unplayed.random())
         val rest = unplayed.filter { it !in chosen }.shuffled()
-        val discarded = shufPlayed.filter { it !in prefix }.shuffled()
+        // Set, not the prefix List: `it !in prefix` was a linear scan, making this line
+        // O(played x prefix) on a path that runs from onMediaItemTransition for EVERY track
+        // change — ~25M comparisons once half of a 10k Shuffle-All queue has played.
+        val prefixSet = prefix.toHashSet()
+        val discarded = shufPlayed.filter { it !in prefixSet }.shuffled()
         val order = (prefix + queued + chosen + rest + discarded).toIntArray()
         // Safety net: the order MUST be a permutation of 0..count-1 or ExoPlayer's timeline
         // navigation corrupts (or crashes). If an invariant was ever violated (stale indices
@@ -562,16 +581,17 @@ class PlaybackService : MediaSessionService() {
         player: Player,
         forward: Boolean,
         stillWanted: () -> Boolean = { true },
-    ) {
-        if (!FolderAdvance.armed(this)) return
+    ): Boolean {
+        if (!FolderAdvance.armed(this)) return false
         val gen = app.session.queueGeneration
-        val path = player.currentMediaItem?.pathExtra ?: return
-        if (path.isEmpty()) return
+        val path = player.currentMediaItem?.pathExtra ?: return false
+        if (path.isEmpty()) return false
         serviceScope.launch {
             FolderAdvance.move(this@PlaybackService, player, forward, expectedGen = gen) {
                 stillWanted() && player.currentMediaItem?.pathExtra == path
             }
         }
+        return true
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =

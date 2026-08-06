@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.data
 
 import android.content.ContentUris
@@ -16,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Reads the on-device audio library from MediaStore. All tracks are loaded once and
@@ -48,11 +51,15 @@ class MediaRepository(context: Context) {
      */
     private class Cache<T : Any> {
         @Volatile private var value: T? = null
-        @Volatile private var generation = 0
+        // AtomicInteger, not a @Volatile Int: `generation++` is a read-modify-write, so two
+        // overlapping invalidations (a permission grant and a MediaStore change signal) could
+        // collapse into one increment — and a lost increment is exactly what lets an in-flight
+        // build() pass the check below and publish pre-rescan data.
+        private val generation = AtomicInteger(0)
         private val lock = Mutex()
 
         fun invalidate() {
-            generation++
+            generation.incrementAndGet()
             value = null
         }
 
@@ -60,9 +67,9 @@ class MediaRepository(context: Context) {
             value?.let { return it }
             return lock.withLock {
                 value?.let { return@withLock it }
-                val startedAt = generation
+                val startedAt = generation.get()
                 val built = build()
-                if (generation == startedAt) value = built
+                if (generation.get() == startedAt) value = built
                 built
             }
         }
@@ -83,7 +90,7 @@ class MediaRepository(context: Context) {
     private val tracksByArtistCache = Cache<Map<String, List<Track>>>()
 
     /** genreId -> member track ids, so opening a genre doesn't re-run the Members query. */
-    private val genreMembersCache = Cache<MutableMap<Long, Set<Long>>>()
+    private val genreMembersCache = Cache<ConcurrentHashMap<Long, Set<Long>>>()
 
     private val caches = listOf(
         tracksCache, albumsCache, artistsCache, genresCache, playlistsCache,
@@ -160,15 +167,21 @@ class MediaRepository(context: Context) {
                 arrayOf(MediaStore.Audio.Genres._ID, MediaStore.Audio.Genres.NAME),
                 null, null, MediaStore.Audio.Genres.NAME,
             )?.use { c ->
-                val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Genres._ID)
-                val nameCol = c.getColumnIndexOrThrow(MediaStore.Audio.Genres.NAME)
-                while (c.moveToNext()) {
-                    val id = c.getLong(idCol)
-                    val name = c.getString(nameCol)?.takeIf { it.isNotBlank() } ?: continue
-                    // Row COUNT only — materializing every member id into a HashSet just to
-                    // read its size walked the whole Members table once per genre.
-                    val count = genreMemberCount(id)
-                    if (count > 0) out.add(Genre(id, name, count))
+                // Tolerant column lookup, like the core track query below: these are the LEGACY
+                // MediaStore tables and are sparse on Android 11+, so a provider that doesn't
+                // expose a column must leave the category empty rather than throw out of the
+                // caller's unguarded lifecycleScope.launch and take the app down.
+                val idCol = c.getColumnIndex(MediaStore.Audio.Genres._ID)
+                val nameCol = c.getColumnIndex(MediaStore.Audio.Genres.NAME)
+                if (idCol >= 0 && nameCol >= 0) {
+                    while (c.moveToNext()) {
+                        val id = c.getLong(idCol)
+                        val name = c.getString(nameCol)?.takeIf { it.isNotBlank() } ?: continue
+                        // Row COUNT only — materializing every member id into a HashSet just to
+                        // read its size walked the whole Members table once per genre.
+                        val count = genreMemberCount(id)
+                        if (count > 0) out.add(Genre(id, name, count))
+                    }
                 }
             }
             out
@@ -177,10 +190,12 @@ class MediaRepository(context: Context) {
 
     suspend fun tracksForGenre(genreId: Long): List<Track> {
         val tracks = allTracks()
-        val members = genreMembersCache.get { mutableMapOf() }
-        val ids = withContext(Dispatchers.IO) {
-            synchronized(members) { members.getOrPut(genreId) { genreMemberIds(genreId) } }
-        }
+        val members = genreMembersCache.get { ConcurrentHashMap() }
+        // Read-then-put on a concurrent map rather than a blocking `synchronized` around the
+        // query: holding a monitor across a content-provider call parks an IO dispatcher thread
+        // and serialises genres that share nothing. A rare duplicate query is the better trade.
+        val ids = members[genreId] ?: withContext(Dispatchers.IO) { genreMemberIds(genreId) }
+            .also { members[genreId] = it }
         return tracks.filter { it.id in ids }
     }
 
@@ -194,8 +209,8 @@ class MediaRepository(context: Context) {
         val ids = HashSet<Long>()
         val uri = MediaStore.Audio.Genres.Members.getContentUri("external", genreId)
         resolver.query(uri, arrayOf(MediaStore.Audio.Media._ID), null, null, null)?.use { c ->
-            val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-            while (c.moveToNext()) ids.add(c.getLong(idCol))
+            val idCol = c.getColumnIndex(MediaStore.Audio.Media._ID)
+            if (idCol >= 0) while (c.moveToNext()) ids.add(c.getLong(idCol))
         }
         return ids
     }
@@ -204,22 +219,29 @@ class MediaRepository(context: Context) {
 
     @Suppress("DEPRECATION")
     suspend fun playlists(): List<Playlist> = playlistsCache.get {
-        // Build the id map once, not per playlist.
-        val byId = allTracks().associateBy { it.id }
+        val tracks = allTracks()
         withContext(Dispatchers.IO) {
+            // Build the id map once, not per playlist — and INSIDE the dispatch: outside it, this
+            // O(n) map over the whole library ran on whatever dispatcher the caller happened to
+            // use, which nothing here enforces is not the main thread.
+            val byId = tracks.associateBy { it.id }
             val out = mutableListOf<Playlist>()
             resolver.query(
                 MediaStore.Audio.Playlists.EXTERNAL_CONTENT_URI,
                 arrayOf(MediaStore.Audio.Playlists._ID, MediaStore.Audio.Playlists.NAME),
                 null, null, MediaStore.Audio.Playlists.NAME,
             )?.use { c ->
-                val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Playlists._ID)
-                val nameCol = c.getColumnIndexOrThrow(MediaStore.Audio.Playlists.NAME)
-                while (c.moveToNext()) {
-                    val id = c.getLong(idCol)
-                    val name = c.getString(nameCol)?.takeIf { it.isNotBlank() } ?: continue
-                    val count = playlistMemberIds(id).count { it in byId }
-                    out.add(Playlist(id, name, count))
+                // Tolerant, for the same reason as genres() above: legacy table, sparse on
+                // Android 11+, and the throw would land in an unguarded coroutine.
+                val idCol = c.getColumnIndex(MediaStore.Audio.Playlists._ID)
+                val nameCol = c.getColumnIndex(MediaStore.Audio.Playlists.NAME)
+                if (idCol >= 0 && nameCol >= 0) {
+                    while (c.moveToNext()) {
+                        val id = c.getLong(idCol)
+                        val name = c.getString(nameCol)?.takeIf { it.isNotBlank() } ?: continue
+                        val count = playlistMemberIds(id).count { it in byId }
+                        out.add(Playlist(id, name, count))
+                    }
                 }
             }
             out
@@ -227,8 +249,10 @@ class MediaRepository(context: Context) {
     }
 
     suspend fun tracksForPlaylist(playlistId: Long): List<Track> {
-        val byId = allTracks().associateBy { it.id }
+        val tracks = allTracks()
         return withContext(Dispatchers.IO) {
+            // Map built inside the dispatch (see playlists()).
+            val byId = tracks.associateBy { it.id }
             playlistMemberIds(playlistId).mapNotNull { byId[it] }
         }
     }
@@ -241,8 +265,8 @@ class MediaRepository(context: Context) {
             uri, arrayOf(MediaStore.Audio.Playlists.Members.AUDIO_ID),
             null, null, MediaStore.Audio.Playlists.Members.PLAY_ORDER,
         )?.use { c ->
-            val col = c.getColumnIndexOrThrow(MediaStore.Audio.Playlists.Members.AUDIO_ID)
-            while (c.moveToNext()) ids.add(c.getLong(col))
+            val col = c.getColumnIndex(MediaStore.Audio.Playlists.Members.AUDIO_ID)
+            if (col >= 0) while (c.moveToNext()) ids.add(c.getLong(col))
         }
         return ids
     }

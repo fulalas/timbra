@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.list
 
 import android.view.LayoutInflater
@@ -95,7 +96,11 @@ class LibraryListAdapter(
             b.subtitle.text = subtitleFor(b, t)
             b.duration.text = Format.clock(t.durationMs)
             applyNowPlaying(b.root, b.title, playing)
-            b.nowPlayingBar.isVisible = playing
+            // isInvisible, not isVisible: GONE removed the bar's 2dp from the layout, so the
+            // playing row was taller than its neighbours and the whole list shifted by 2dp on
+            // every track change. Keeping the slot reserved is the same trick row_queue uses to
+            // keep its art column aligned.
+            b.nowPlayingBar.isInvisible = !playing
             // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not
             // GONE) so every row's text stays aligned in a mixed list.
             ArtLoader.load(b.thumb, owner, t.uri, t.albumId) { b.thumb.isInvisible = !it }
@@ -109,7 +114,9 @@ class LibraryListAdapter(
             val n = item.node
             b.thumb.setImageResource(R.drawable.matte_folder_96)
             b.title.text = n.name
-            b.subtitle.text = b.root.context.getString(R.string.song_count, n.totalTrackCount)
+            b.subtitle.text = b.root.resources.getQuantityString(
+                R.plurals.song_count, n.totalTrackCount, n.totalTrackCount,
+            )
             b.root.setOnClickListener { onFolder(n) }
             b.root.setOnLongClickListener { onLongItem(item); true }
         }
@@ -119,6 +126,10 @@ class LibraryListAdapter(
             b.title.text = item.title
             b.subtitle.text = item.subtitle
             b.root.setOnClickListener { onNav(item) }
+            // RowVH is shared with FolderRow, which DOES install one — a holder recycled from a
+            // folder row would otherwise keep the previous folder's handler and open its action
+            // menu on a long press here.
+            b.root.setOnLongClickListener(null)
         }
     }
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.queue
 
 import android.os.Bundle
@@ -73,7 +74,9 @@ class QueueFragment : Fragment(), MenuProvider {
         requireActivity().addMenuProvider(this, viewLifecycleOwner)
 
         viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // viewLifecycleOwner-qualified: unqualified this resolves against the FRAGMENT, mixing
+            // two owners inside a view-scoped coroutine (see Ext.kt for the correct form).
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // The list membership only changes when the queue changes...
                 launch { player.queue.collect { fullQueue = it; refreshList() } }
                 // ...while the highlight/dim only needs the current index.

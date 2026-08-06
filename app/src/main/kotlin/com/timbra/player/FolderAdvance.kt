@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import android.content.Context
@@ -80,10 +81,9 @@ object FolderAdvance {
             // re-adopts (its own in-memory copy would otherwise keep claiming ALL and write it
             // back over this).
             val store = context.app.playbackStore
-            val (shuffleOrdinal, repeatOrdinal) = store.loadModes()
-            val narrowed = ShuffleMode.entries.getOrElse(shuffleOrdinal) { ShuffleMode.OFF }
-                .narrowedToFolder()
-            if (narrowed.ordinal != shuffleOrdinal) store.saveModes(narrowed.ordinal, repeatOrdinal)
+            val (shuffle, repeat) = store.loadModes()
+            val narrowed = shuffle.narrowedToFolder()
+            if (narrowed != shuffle) store.saveModes(narrowed, repeat)
             // The UI persists the queue on timeline changes, but it may be detached — mirror it
             // here so a process death mid-background doesn't restore the STALE previous folder.
             store.saveQueue(tracks.map { it.id }, emptyList(), start, 0L)
@@ -93,5 +93,5 @@ object FolderAdvance {
 
     /** True when the persisted repeat mode is Advance-List, i.e. folder stepping is armed. */
     fun armed(context: Context): Boolean =
-        context.app.playbackStore.loadModes().second == RepeatMode.ADVANCE.ordinal
+        context.app.playbackStore.loadModes().second == RepeatMode.ADVANCE
 }

@@ -10,6 +10,10 @@
         <item name="android:textColorPrimary">@color/pa_text_primary</item>
         <item name="android:textColorSecondary">@color/pa_text_secondary</item>
         <item name="android:windowBackground">@color/pa_window</item>
+        <!-- API < 35 only: from SDK 35 the platform enforces edge-to-edge and IGNORES these two.
+             MainActivity applies the system-bar insets to the content root so the toolbar and the
+             mini-player are not drawn under the bars there; the black windowBackground above is
+             what shows through behind them. -->
         <item name="android:statusBarColor">@color/pa_window</item>
         <item name="android:navigationBarColor">@color/pa_window</item>
         <item name="colorControlActivated">@color/pa_accent_glow</item>

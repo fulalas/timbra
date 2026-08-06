@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import android.net.Uri
@@ -83,7 +84,12 @@ class RiffMpegExtractor : Extractor {
      * `data` chunk payload. Returns false if the file ends before one is found.
      */
     private fun skipToPayload(input: ExtractorInput): Boolean {
-        input.skipFully(12) // "RIFF" + size + "WAVE"
+        // allowEndOfInput on EVERY read and skip. The header read below already did this, but the
+        // two skips used the throwing overload — so a truncated file (or a chunk header lying
+        // about its size) raised EOFException out of read(), media3 wrapped it as a source error
+        // and the track died: exactly the failure this extractor exists to prevent, just moved
+        // here from WavExtractor. Returning false ends the stream cleanly instead.
+        if (!input.skipFully(12, true)) return false // "RIFF" + size + "WAVE"
         val chunk = ByteArray(8)
         var seen = 0
         while (seen++ < MAX_CHUNKS) {
@@ -94,7 +100,7 @@ class RiffMpegExtractor : Extractor {
                 dataStart = input.position
                 return true
             }
-            input.skipFully(size.padded())
+            if (!input.skipFully(size.padded(), true)) return false
         }
         return false
     }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.eq
 
 import android.content.Context
@@ -27,9 +28,17 @@ class VerticalFader @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isEnabled) return false
+        // CANCEL is not a release: the gesture was taken away (an ancestor claimed it, the window
+        // lost focus, a dialog opened over the screen). Treating it like ACTION_UP applied the
+        // cancel coordinate as a value AND fired onRelease, which the equalizer screen wires
+        // straight to setGains — persisting a band gain the user never chose.
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            parent?.requestDisallowInterceptTouchEvent(false)
+            return true
+        }
         val released = when (event.action) {
             MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true); false }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
                 true
             }

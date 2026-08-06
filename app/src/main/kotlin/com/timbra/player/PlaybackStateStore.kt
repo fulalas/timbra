@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import android.content.Context
@@ -17,8 +18,8 @@ class PlaybackStateStore(context: Context) {
         val enqueuedIndices: List<Int>,
         val index: Int,
         val positionMs: Long,
-        val shuffleOrdinal: Int,
-        val repeatOrdinal: Int,
+        val shuffle: ShuffleMode,
+        val repeat: RepeatMode,
     )
 
     /**
@@ -44,11 +45,17 @@ class PlaybackStateStore(context: Context) {
      * Bumps [modesRevision] so a reader can tell "nobody has touched these since I last wrote
      * them" from "someone else did" — the detached service narrows Shuffle-All when it advances
      * a folder, and a retained PlayerConnection has to notice.
+     *
+     * Synchronized because the bump is a read-modify-write and there are two writers by design:
+     * [PlayerConnection] on the main thread and the service's detached folder advance. Two
+     * interleaved calls would otherwise both read N and write N+1, losing an increment — and a
+     * lost increment makes the connection conclude nobody changed the modes.
      */
-    fun saveModes(shuffleOrdinal: Int, repeatOrdinal: Int) {
+    @Synchronized
+    fun saveModes(shuffle: ShuffleMode, repeat: RepeatMode) {
         prefs.edit()
-            .putInt(KEY_SHUFFLE, shuffleOrdinal)
-            .putInt(KEY_REPEAT, repeatOrdinal)
+            .putString(KEY_SHUFFLE, shuffle.name)
+            .putString(KEY_REPEAT, repeat.name)
             .putInt(KEY_MODES_REV, prefs.getInt(KEY_MODES_REV, 0) + 1)
             .apply()
     }
@@ -87,39 +94,71 @@ class PlaybackStateStore(context: Context) {
         savePosition(player.currentMediaItemIndex, player.currentPosition.coerceAtLeast(0))
     }
 
+    /**
+     * The saved snapshot, or null when there is none (or it is unreadable).
+     *
+     * Everything here is POSITIONAL — [Saved.index] and [Saved.enqueuedIndices] are positions in
+     * [Saved.trackIds] — so a single unparseable token invalidates the whole snapshot instead of
+     * being dropped: silently shortening the list would shift the index onto a different song and
+     * mismark the play-next block, with nothing reported. The index is clamped here too, because
+     * [savePosition] writes it on its own (transitions, play/pause, stop) without rewriting the
+     * id list, so a checkpoint taken after a timeline shrink can leave it past the end.
+     */
     fun load(): Saved? {
-        val ids = prefs.getString(KEY_IDS, null)
+        val tokens = prefs.getString(KEY_IDS, null)
             ?.split(",")
-            ?.mapNotNull { it.toLongOrNull() }
+            ?.filter { it.isNotEmpty() }
             ?.takeIf { it.isNotEmpty() }
             ?: return null
+        val ids = tokens.map { it.toLongOrNull() ?: return null }
         val enqueued = prefs.getString(KEY_ENQ, null)
-            ?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
+            ?.split(",")
+            ?.filter { it.isNotEmpty() }
+            ?.map { it.toIntOrNull() ?: return null }
+            ?.filter { it in ids.indices }
+            ?: emptyList()
+        val (shuffle, repeat) = loadModes()
         return Saved(
             trackIds = ids,
             enqueuedIndices = enqueued,
-            index = prefs.getInt(KEY_INDEX, 0),
-            positionMs = prefs.getLong(KEY_POS, 0),
-            shuffleOrdinal = prefs.getInt(KEY_SHUFFLE, 0),
-            repeatOrdinal = prefs.getInt(KEY_REPEAT, 0),
+            index = prefs.getInt(KEY_INDEX, 0).coerceIn(0, ids.lastIndex),
+            positionMs = prefs.getLong(KEY_POS, 0).coerceAtLeast(0),
+            shuffle = shuffle,
+            repeat = repeat,
         )
     }
 
     /**
-     * The persisted play modes (shuffle, repeat) as ordinals — read independently of the saved
-     * queue, so a live-session reconnect can re-adopt them even when the queue itself isn't
-     * (re)loaded from disk. Defaults to OFF (ordinal 0) for both.
+     * The persisted play modes — read independently of the saved queue, so a live-session
+     * reconnect can re-adopt them even when the queue itself isn't (re)loaded from disk.
+     *
+     * Stored by NAME (see [enumByName]). The legacy ordinal keys are still read when no name is
+     * present, so an in-place update keeps the user's modes instead of silently resetting
+     * Advance-List to OFF. Defaults to OFF for both.
      */
-    fun loadModes(): Pair<Int, Int> =
-        prefs.getInt(KEY_SHUFFLE, 0) to prefs.getInt(KEY_REPEAT, 0)
+    fun loadModes(): Pair<ShuffleMode, RepeatMode> {
+        val shuffle = prefs.getString(KEY_SHUFFLE, null)
+            ?.let { enumByName(it, ShuffleMode.OFF) }
+            ?: ShuffleMode.entries.getOrElse(prefs.getInt(KEY_SHUFFLE_LEGACY, 0)) { ShuffleMode.OFF }
+        val repeat = prefs.getString(KEY_REPEAT, null)
+            ?.let { enumByName(it, RepeatMode.OFF) }
+            ?: RepeatMode.entries.getOrElse(prefs.getInt(KEY_REPEAT_LEGACY, 0)) { RepeatMode.OFF }
+        return shuffle to repeat
+    }
 
     private companion object {
         const val KEY_IDS = "queue_ids"
         const val KEY_ENQ = "enqueued_indices"
         const val KEY_INDEX = "index"
         const val KEY_POS = "position"
-        const val KEY_SHUFFLE = "shuffle"
-        const val KEY_REPEAT = "repeat"
         const val KEY_MODES_REV = "modes_revision"
+
+        // Names, written since 0.8.0.
+        const val KEY_SHUFFLE = "shuffle_name"
+        const val KEY_REPEAT = "repeat_name"
+
+        // Ordinals, written before 0.8.0 — read once, to migrate an existing install.
+        const val KEY_SHUFFLE_LEGACY = "shuffle"
+        const val KEY_REPEAT_LEGACY = "repeat"
     }
 }

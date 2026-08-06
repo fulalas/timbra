@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.player
 
 import android.graphics.Bitmap
@@ -440,7 +441,9 @@ class PlayerFragment : Fragment() {
         ) { player.seekTo(it) }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // viewLifecycleOwner-qualified: unqualified this binds to the FRAGMENT's lifecycle,
+            // while the block below deliberately resets VIEW-scoped state on each restart.
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // Returning from the background re-runs this block and re-emits both
                 // StateFlows, but the view (and pager) weren't recreated, so onViewCreated
                 // didn't reset the flag. Snap the first realignment after every foreground
@@ -524,9 +527,9 @@ class PlayerFragment : Fragment() {
         Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
     }
 
-    private fun showModePopup(titleRes: Int, subRes: Int) = showModePopup(buildString {
+    private fun showModePopup(titleRes: Int, subRes: Int?) = showModePopup(buildString {
         append(getString(titleRes))
-        if (subRes != 0) { append('\n'); append(getString(subRes)) }
+        if (subRes != null) { append('\n'); append(getString(subRes)) }
     })
 
     /** Page position of queue index [index]: with shuffle on the deck is [prev?, current,
@@ -645,7 +648,12 @@ class PlayerFragment : Fragment() {
      * of the library) glides back to rest.
      */
     private fun jumpFolder(forward: Boolean) {
-        if (advancing || folderJumping) { glideDeckTo(0f); return }
+        // The settle callback matters on this path too: settleVerticalDrag's COMMIT branch calls
+        // us INSTEAD of glideDeckTo(0f) { afterVerticalDrag() }, relying on the finally block below
+        // to apply what the held finger deferred — and returning here launches no coroutine, so
+        // there is no finally. Without it a pendingRebuild stays stranded and the deck keeps a
+        // stale page list whose leadOffset no longer matches, mis-decoding the next swipe.
+        if (advancing || folderJumping) { glideDeckTo(0f) { afterVerticalDrag() }; return }
         folderJumping = true
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -659,7 +667,10 @@ class PlayerFragment : Fragment() {
                 // With only a frozen snapshot on screen, no rebind can ever flash. Snapshot failure
                 // (e.g. an unsnapshotable hardware bitmap) falls back to gliding the live pager.
                 val overlay = runCatching {
-                    val bmp = Bitmap.createBitmap(b.artPager.width, b.artPager.height, Bitmap.Config.ARGB_8888)
+                    // RGB_565: the snapshot is opaque, on screen for ~180ms and then dropped, so
+                    // ARGB_8888 was allocating 4-8 MB per jump on the main thread against a heap
+                    // the art cache has already claimed an eighth of.
+                    val bmp = Bitmap.createBitmap(b.artPager.width, b.artPager.height, Bitmap.Config.RGB_565)
                     b.artPager.draw(Canvas(bmp))
                     ImageView(requireContext()).apply { setImageBitmap(bmp) }
                 }.getOrNull()

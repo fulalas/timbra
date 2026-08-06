@@ -1,10 +1,19 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
 // App display name — single source of truth lives in gradle.properties (`appName`).
-val appName = providers.gradleProperty("appName").get()
+val appName = providers.gradleProperty("appName").get().trim()
+require(appName.isNotEmpty()) { "appName in gradle.properties must not be blank" }
+
+// The same value is consumed by three different languages — this generated XML resource, the APK
+// filename in build.sh, and a SQL literal in install.sh — so validate the one property rather than
+// escaping it three ways. Keeps it to characters that are safe everywhere.
+require(appName.matches(Regex("[A-Za-z0-9][A-Za-z0-9 ._-]*"))) {
+    "appName must be letters, digits, spaces, dots, underscores or hyphens (was: \"$appName\")"
+}
 
 android {
     namespace = "com.timbra"
@@ -16,11 +25,17 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library → overflow → About) and in the output APK filename.
-        versionCode = 120
-        versionName = "0.7.44"
+        versionCode = 121
+        versionName = "0.8.0"
 
         // Generate R.string.app_name from `appName` so the name isn't duplicated in strings.xml.
         resValue("string", "app_name", appName)
+
+        // Explicit, so an unsupported ABI fails at INSTALL time. The jniLibs excludes below strip
+        // the x86 .so files but do not stop the APK installing on an x86/x86_64 device, where
+        // System.loadLibrary then fails and media3's loader swallows it — silently losing every
+        // FFmpeg-backed format instead of failing loudly.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -56,6 +71,12 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions {
+        // Android framework stubs return defaults instead of throwing, so pure-logic tests can
+        // run on the JVM without Robolectric.
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildFeatures {
         viewBinding = true
         buildConfig = true
@@ -74,6 +95,11 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Only to obtain an android.net.Uri instance: Track carries one, and the framework stub in the
+    // unit-test classpath cannot produce a real Uri. Nothing here mocks app behaviour.
+    testImplementation("org.mockito:mockito-core:5.14.2")
+
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")

@@ -4,8 +4,10 @@
   `app_name` resource via `resValue` in `app/build.gradle.kts`, and the APK filename in
   `build.sh`). To rename the app, change that one property.
 - **Stack:** Kotlin + XML Views. Package `com.timbra`. minSdk 24, target/compile 35.
-- **Audio:** Media3/ExoPlayer + nextlib FFmpeg decoder (`NextRenderersFactory`),
-  bundled for all ABIs incl. `arm64-v8a`.
+- **Audio:** Media3/ExoPlayer + nextlib FFmpeg decoder (`NextRenderersFactory`), bundled for the
+  device ABIs `arm64-v8a` and `armeabi-v7a`. The emulator-only `x86`/`x86_64` libs are stripped
+  (`packaging.jniLibs.excludes`) and those ABIs are excluded from the APK (`ndk.abiFilters`), so an
+  x86 device fails at install time instead of installing and silently having no FFmpeg decoders.
 - **UI/theme:** classic matte dark skin, reusing the original `matte_*` PNG assets
   (in `app/src/main/res/drawable-*`). Nine-patches from the APK were pre-compiled, so
   they were recreated as XML shape drawables (`deck_bg`, `seek_progress`, etc.).
@@ -22,9 +24,11 @@ Single source of truth: `app/build.gradle.kts` → `defaultConfig`.
 
 ```bash
 ./build.sh                 # assembleRelease (default)
-./build.sh assembleDebug   # debug variant
+./build.sh assembleDebug   # debug variant -> <app>-<version>-debug.apk (own filename: it is
+                           # signed with the DEBUG key and cannot update a release install)
 ./build.sh --no-install    # build but don't touch the device
 ```
+The Gradle daemon is used by default; set `TIMBRA_GRADLE_FLAGS=--no-daemon` for a one-shot build.
 When a device is connected (adb, `device` state), `build.sh` installs the APK
 automatically after building (in-place update via `./install.sh`); `--no-install` skips it.
 `build.sh` is self-sufficient: toolchain resolution is `$TIMBRA_ENV` → `./toolchain/env.sh`
@@ -48,6 +52,17 @@ adb logcat -b crash -d | tail -60
 ```
 Grant the audio permission on first launch. First run scans MediaStore.
 
+## Tests
+
+```bash
+gradle testReleaseUnitTest      # JVM unit tests (no device needed)
+```
+Cover the deterministic logic: `NATURAL`/natural order, `Sorting`'s comparators (every order is
+total and input-order independent), `FolderTreeBuilder` (build/collapse/counts/traversal/
+neighbours), `PlayModes` (cycling, `enumByName` round-trip), and `Format`. `Track` carries a
+`Uri`, which the framework stub can't produce, so `TestTracks` supplies a mocked one — that is the
+only thing Mockito is used for.
+
 ## Verify a build (static, since CI has no emulator)
 
 ```bash
@@ -59,11 +74,21 @@ Confirm `arm64-v8a` + the FFmpeg libs (`libavcodec`, `libmedia3ext`, `libswresam
 
 ## Layout of the code
 
-- `player/` — `PlaybackService` (MediaSessionService + ExoPlayer/FFmpeg),
-  `PlayerConnection` (MediaController wrapper + `UiPlayback` state), `PlayModes`.
-- `data/` — `MediaRepository` (MediaStore), `FolderTreeBuilder` (virtual folder tree
-  from file paths, no all-files permission), `Sorting` (+ `SortDefaults`: folders =
-  hierarchy / by filename).
+- `player/` — `PlaybackService` (MediaSessionService + ExoPlayer/FFmpeg; also owns the
+  Advance-List continuation for every non-gesture trigger and the custom no-repeat shuffle
+  engine), `PlayerConnection` (MediaController wrapper + `UiPlayback`/`QueueItem` state),
+  `FolderAdvance` (THE shared folder move, used by both the service and the UI),
+  `PlaybackSession` (queue facts shared across both owners, one atomic snapshot),
+  `PlaybackStateStore` (queue/position/modes persistence; modes stored by NAME),
+  `PlayModes` (`ShuffleMode`/`RepeatMode` + `cycleNext`/`enumByName`),
+  `MediaItems` (the single decode point for queue-item extras),
+  `EqualizerAudioProcessor` + `EqSettings` (the 7-band DSP and its persistence),
+  `RiffMpegExtractor` (+ `TimbraExtractorsFactory`, for RIFF-wrapped MPEG).
+- `data/` — `MediaRepository` (MediaStore; generation-guarded caches), `FolderTreeBuilder`
+  (virtual folder tree from file paths, no all-files permission, plus the traversal helpers),
+  `Sorting` (comparators + `NATURAL` + `SortDefaults`: folders = hierarchy / by filename),
+  `FolderSort` (the app-wide persisted folder sort/view), `model/Models` (`Track`, `FolderNode`,
+  index records).
 - `ui/` — `MainActivity` (toolbar + nav host + mini-player), `library/`, `folders/`,
   `list/` (shared `LibraryListAdapter`), `player/`, `queue/`, `search/`, `eq/`,
   `dialogs/`, `ArtLoader`, `Format`, `Transport`, `Marquee`, `ItemActions`, `Ext`.

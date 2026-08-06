@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import kotlinx.coroutines.sync.Mutex
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The queue facts that BOTH the UI's [PlayerConnection] and [PlaybackService] need.
@@ -16,18 +18,24 @@ import kotlinx.coroutines.sync.Mutex
  * made once, at the instant the queue ended, so backgrounding the app in that window lost the
  * advance entirely. The service now always owns it — see [FolderAdvance].)
  *
- * Main-thread state (both owners run their queue work there); the fields are volatile because
- * the service's stall/error callbacks can observe them from the playback thread.
+ * Main-thread state (both owners run their queue work there), but the service's stall/error
+ * callbacks can observe it from the playback thread — so the whole of it is ONE immutable
+ * snapshot swapped atomically. Two independent `@Volatile` fields would give visibility without
+ * atomicity: `generation++` could lose an increment (defeating the very guard the counter
+ * exists for), and a reader could see the new generation paired with the previous folder.
  */
 class PlaybackSession {
+
+    private data class State(val generation: Int, val folderContext: String?)
+
+    private val state = AtomicReference(State(0, null))
 
     /**
      * Path of the folder the current queue was loaded from by a folder tap/jump/advance; null
      * when the queue came from anywhere else. THE Advance-List anchor — when it is null the
      * callers fall back to the playing file's own directory, which is always a song-folder.
      */
-    @Volatile
-    var folderContext: String? = null
+    val folderContext: String? get() = state.get().folderContext
 
     /**
      * Bumped on every queue replacement, by whichever side made it. Folder navigation captures
@@ -35,16 +43,13 @@ class PlaybackSession {
      * so an automatic advance and a user swipe aimed at the same transition can't stack into a
      * double jump.
      */
-    @Volatile
-    var queueGeneration = 0
-        private set
+    val queueGeneration: Int get() = state.get().generation
 
     /** Serializes folder navigation across both owners, so two moves can't interleave. */
     val folderNavLock = Mutex()
 
     /** Record a queue replacement; [folderContext] is the folder it came from, or null. */
     fun queueReplaced(folderContext: String?) {
-        queueGeneration++
-        this.folderContext = folderContext
+        state.updateAndGet { State(it.generation + 1, folderContext) }
     }
 }

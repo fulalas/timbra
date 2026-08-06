@@ -1,19 +1,25 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.os.bundleOf
 import androidx.core.view.MenuProvider
 import androidx.core.view.isVisible
@@ -40,7 +46,10 @@ import com.timbra.player.FolderAdvance
 import com.timbra.player.PlayerConnection
 import com.timbra.player.ShuffleMode
 import com.timbra.player.UiPlayback
+import com.timbra.ui.dialogs.Dialogs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
@@ -78,6 +87,7 @@ class MainActivity : AppCompatActivity() {
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             if (result[audioPermission()] == true) app.refreshLibrary()
+            else showPermissionRationale()
         }
 
     private val deleteLauncher =
@@ -89,6 +99,15 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Apps targeting SDK 35 are drawn edge-to-edge and android:statusBarColor /
+        // navigationBarColor are IGNORED, so without this the toolbar sits under the status bar and
+        // the mini-player under the navigation bar — the controls the user actually taps.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         setSupportActionBar(binding.toolbar)
         setupActionBarWithNavController(navController, appBarConfig)
@@ -117,7 +136,7 @@ class MainActivity : AppCompatActivity() {
 
         player = PlayerConnection(this)
         setupMiniPlayer()
-        ensureAudioPermission()
+        ensureAudioPermission(firstCreate = savedInstanceState == null)
 
         // Launched ONCE here (not in onStart): repeatOnLifecycle already stops/restarts the
         // collection across background/foreground, whereas launching from onStart would add
@@ -165,8 +184,7 @@ class MainActivity : AppCompatActivity() {
             }
             // The position only means anything for the song it was taken from.
             val positionMs = if (kept.getOrNull(index) == saved.index) saved.positionMs else 0L
-            player.restore(tracks, enqueuedFlags, index, positionMs,
-                saved.shuffleOrdinal, saved.repeatOrdinal)
+            player.restore(tracks, enqueuedFlags, index, positionMs, saved.shuffle, saved.repeat)
             openPlayerOnce()
         }
     }
@@ -368,8 +386,22 @@ class MainActivity : AppCompatActivity() {
             val pi = MediaStore.createDeleteRequest(contentResolver, uris)
             deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
         } else {
-            uris.forEach { runCatching { contentResolver.delete(it, null, null) } }
-            app.refreshLibrary()
+            // Off the main thread, and the outcome reported: these are synchronous ContentResolver
+            // calls, one per file, and discarding the result meant a delete that failed was silent
+            // while refreshLibrary() ran and the file reappeared in the list unexplained.
+            lifecycleScope.launch {
+                val failed = withContext(Dispatchers.IO) {
+                    uris.count { runCatching { contentResolver.delete(it, null, null) }.getOrDefault(0) == 0 }
+                }
+                app.refreshLibrary()
+                if (failed > 0) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.delete_failed, failed),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
         }
     }
 
@@ -443,7 +475,7 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.READ_MEDIA_AUDIO
         else Manifest.permission.READ_EXTERNAL_STORAGE
 
-    private fun ensureAudioPermission() {
+    private fun ensureAudioPermission(firstCreate: Boolean) {
         val wanted = buildList {
             add(audioPermission())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -453,7 +485,37 @@ class MainActivity : AppCompatActivity() {
         val needed = wanted.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (needed.isEmpty()) app.refreshLibrary() else permLauncher.launch(needed.toTypedArray())
+        if (needed.isEmpty()) {
+            // Only on a genuine first create. This activity declares no android:configChanges, so
+            // onCreate runs again on every rotation, dark-mode switch and multi-window resize — and
+            // refreshLibrary() discards the track list, folder tree, traversal cache AND the whole
+            // art LruCache, so a rotation was re-querying MediaStore and re-decoding every cover.
+            if (firstCreate) app.refreshLibrary()
+        } else {
+            permLauncher.launch(needed.toTypedArray())
+        }
+    }
+
+    /**
+     * A refused audio permission used to be a dead end: the launcher callback did nothing,
+     * [ensureAudioPermission] is only reachable from onCreate, and the browse screens' empty state
+     * reads "no results" — so the library just looked empty, with no explanation and no way to
+     * re-ask short of force-stopping the app.
+     */
+    private fun showPermissionRationale() {
+        Dialogs.confirm(
+            this,
+            titleRes = R.string.perm_needed_title,
+            message = getString(R.string.perm_needed_body),
+            confirmRes = R.string.perm_open_settings,
+        ) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null),
+                ),
+            )
+        }
     }
 
     private companion object {

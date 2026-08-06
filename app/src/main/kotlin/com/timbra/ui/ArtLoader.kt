@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui
 
 import android.content.ContentUris
@@ -9,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.LruCache
 import android.util.Size
+import java.util.concurrent.atomic.AtomicInteger
 import android.widget.ImageView
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -55,8 +57,7 @@ object ArtLoader {
      * evictAll() and reinstate the pre-rescan cover (or permanently blacklist art that had just
      * been added), which is exactly what invalidate() exists to prevent.
      */
-    @Volatile
-    private var generation = 0
+    private val generation = AtomicInteger(0)
 
     /**
      * Drop the negative-result set and cached bitmaps. Called on library rescans — without
@@ -64,7 +65,10 @@ object ArtLoader {
      * process died (and stale art would survive re-tagging).
      */
     fun invalidate() {
-        generation++
+        // AtomicInteger: `generation++` is a read-modify-write, and a lost increment is what lets
+        // an in-flight decode pass the guard in load() and put a pre-rescan bitmap back into the
+        // just-evicted cache (or blacklist art the rescan had only now added).
+        generation.incrementAndGet()
         misses.clear()
         trackMisses.clear()
         cache.evictAll()
@@ -107,11 +111,11 @@ object ArtLoader {
         // Read the Context here, on the main thread — the decode ran on Dispatchers.IO and
         // dereferenced the View to get it, which is View state accessed off the main thread.
         val context = view.context.applicationContext
-        val startedAt = generation
+        val startedAt = generation.get()
         owner.lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) { decode(context, trackUri, albumId, target) }
             // A rescan happened while we were decoding: this result describes the old library.
-            if (generation != startedAt) return@launch
+            if (generation.get() != startedAt) return@launch
             if (bmp != null) {
                 cache.put(key, bmp)
                 if (view.getTag(R.id.art_tag) == key) {
@@ -148,7 +152,12 @@ object ArtLoader {
         // API 29+: reliable thumbnail from the track content Uri.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && trackUri != null) {
             runCatching {
-                return resolver.loadThumbnail(trackUri, Size(target, target), null)
+                // Size is a REQUEST, not a bound — loadThumbnail returns whatever MediaStore has,
+                // commonly a 512px cover. Uncapped it broke this file's central invariant (the
+                // cache key is suffixed with the decode size and the budget assumes a 48dp row
+                // caches a 48dp bitmap), reintroducing on the primary API 29+ path the very waste
+                // the size-keying was added to remove.
+                return resolver.loadThumbnail(trackUri, Size(target, target), null).cappedTo(target)
             }
         }
         // Fallback: legacy album-art Uri stream. This is the ONLY path on API 24-28, and it is
@@ -178,6 +187,16 @@ object ArtLoader {
             }
         }
         return null
+    }
+
+    /** [this] scaled down proportionally if either edge exceeds [target]; unchanged otherwise. */
+    private fun Bitmap.cappedTo(target: Int): Bitmap {
+        val longest = maxOf(width, height)
+        if (longest <= target || longest == 0) return this
+        val scale = target.toDouble() / longest
+        val w = (width * scale).toInt().coerceAtLeast(1)
+        val h = (height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(this, w, h, true).also { if (it !== this) recycle() }
     }
 
     /**

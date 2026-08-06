@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 24-30 backup scope: an ALLOW-LIST, so anything not named here is not backed up.
+
+  Only the equalizer curve transfers. playback_state is deliberately left out because it holds
+  MediaStore row ids (the queue and the index into it), which are per-device and change on a
+  rescan — restoring them onto another device resolves them against a different library and lands
+  on an arbitrary song. folder_sort is left out for the same reason (it is cheap to re-pick).
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="eq_settings.xml" />
+</full-backup-content>

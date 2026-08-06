@@ -10,7 +10,8 @@
         android:layout_height="@dimen/pa_row_height"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp">
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
 
         <ImageView
             android:id="@+id/thumb"
@@ -53,5 +54,5 @@
         android:layout_width="match_parent"
         android:layout_height="2dp"
         android:background="@drawable/now_playing_underline"
-        android:visibility="gone" />
+        android:visibility="invisible" />
 </LinearLayout>

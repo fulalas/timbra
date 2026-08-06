@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -47,7 +49,7 @@ object ItemActions {
             when (which) {
                 0 -> infoDialog(
                     fragment,
-                    infoBody(item.displayTitle, item.artist, item.album, item.filePath),
+                    infoBody(ctx, item.displayTitle, item.artist, item.album, item.filePath),
                 )
                 1 -> shareUris(fragment, listOf(MediaRepository.trackUri(item.mediaId)))
                 2 -> onRemove()
@@ -57,6 +59,7 @@ object ItemActions {
 
     /** The Info dialog body; track-only lines (number, duration) are included when known. */
     private fun infoBody(
+        ctx: Context,
         title: String,
         artist: String,
         album: String,
@@ -65,13 +68,17 @@ object ItemActions {
         discNo: Int = 0,
         durationMs: Long = 0,
     ): String = buildString {
-        appendLine("Title: $title")
-        appendLine("Artist: ${artist.ifBlank { "—" }}")
-        appendLine("Album: ${album.ifBlank { "—" }}")
-        if (discNo > 0) appendLine("Disc: $discNo")
-        if (trackNo > 0) appendLine("Track: $trackNo")
-        if (durationMs > 0) appendLine("Duration: ${Format.clock(durationMs)}")
-        appendLine("Path: $path")
+        // Through resources, like the rest of this file: these labels are the dialog the user reads
+        // most, and hardcoding them put the one screen localisation cannot reach in the middle of a
+        // file that otherwise uses R.string for everything.
+        val none = ctx.getString(R.string.info_none)
+        appendLine(ctx.getString(R.string.info_title, title))
+        appendLine(ctx.getString(R.string.info_artist, artist.ifBlank { none }))
+        appendLine(ctx.getString(R.string.info_album, album.ifBlank { none }))
+        if (discNo > 0) appendLine(ctx.getString(R.string.info_disc, discNo))
+        if (trackNo > 0) appendLine(ctx.getString(R.string.info_track, trackNo))
+        if (durationMs > 0) appendLine(ctx.getString(R.string.info_duration, Format.clock(durationMs)))
+        appendLine(ctx.getString(R.string.info_path, path))
     }
 
     private fun infoDialog(fragment: Fragment, body: String) {
@@ -81,7 +88,8 @@ object ItemActions {
     private fun enqueue(fragment: Fragment, tracks: List<Track>) {
         fragment.player.enqueueNext(tracks)
         val label = tracks.firstOrNull()?.let {
-            if (tracks.size == 1) it.displayTitle else "${tracks.size} songs"
+            if (tracks.size == 1) it.displayTitle
+            else fragment.resources.getQuantityString(R.plurals.n_songs, tracks.size, tracks.size)
         } ?: return
         Toast.makeText(
             fragment.requireContext(),
@@ -93,9 +101,14 @@ object ItemActions {
     private fun showInfo(fragment: Fragment, tracks: List<Track>) {
         val t = tracks.first()
         val body = infoBody(
+            fragment.requireContext(),
             t.displayTitle, t.artist, t.album, t.path, t.trackNo, t.discNo, t.durationMs,
         )
-        val suffix = if (tracks.size > 1) "\n(${tracks.size} files selected)" else ""
+        val suffix = if (tracks.size > 1) {
+            "\n" + fragment.resources.getQuantityString(
+                R.plurals.n_files_selected, tracks.size, tracks.size,
+            )
+        } else ""
         infoDialog(fragment, body + suffix)
     }
 
@@ -116,7 +129,7 @@ object ItemActions {
     private fun confirmDelete(fragment: Fragment, tracks: List<Track>) {
         val ctx = fragment.requireContext()
         val msg = if (tracks.size == 1) ctx.getString(R.string.delete_confirm)
-        else ctx.getString(R.string.delete_confirm_many, tracks.size)
+        else ctx.resources.getQuantityString(R.plurals.delete_confirm_many, tracks.size, tracks.size)
         Dialogs.confirm(ctx, R.string.menu_delete, msg, R.string.menu_delete) {
             (fragment.requireActivity() as MainActivity).requestDelete(tracks.map { it.uri })
         }

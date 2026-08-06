@@ -9,17 +9,21 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Held by ExoPlayer via setWakeMode(WAKE_MODE_LOCAL) in PlaybackService, so long
+         playback with the screen off isn't exposed to doze-related stalls. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".TimbraApp"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Timbra"
-        tools:targetApi="34">
+        tools:targetApi="35">
 
         <activity
             android:name=".ui.MainActivity"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import androidx.media3.common.C
@@ -51,10 +52,19 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
          * thread, where a typical 2-3-slider curve would otherwise pay for all 7 bands.
          */
         val activeBands: IntArray,
+        /**
+         * Input scale applied before the cascade, compensating the largest positive band gain.
+         *
+         * The biquads can only ADD level and the only limiter downstream is the output clamp, so
+         * a loud track with any boost clipped into audible distortion rather than simply getting
+         * louder — and because the seven Q=1 bands sit ~1.4 octaves apart their responses overlap,
+         * so adjacent boosts compound well past either band's dB figure.
+         */
+        val preamp: Double,
         val generation: Int,
     )
 
-    @Volatile private var tuning = Tuning(false, identityCoeffs(), IntArray(0), 0)
+    @Volatile private var tuning = Tuning(false, identityCoeffs(), IntArray(0), 1.0, 0)
 
     /** Guards the rebuild inputs below and serializes publishing. */
     private val buildLock = Any()
@@ -109,6 +119,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             return
         }
         val ch = channels
+        val preamp = cfg.preamp
         val inShorts = inputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         out.order(ByteOrder.LITTLE_ENDIAN)
         val total = inShorts.remaining()
@@ -116,7 +127,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         var c = 0 // interleaved channel of sample i (a wrapping counter, not a per-sample modulo)
         while (i < total) {
             val st = state[c]
-            var s = inShorts.get().toDouble()
+            var s = inShorts.get().toDouble() * preamp
             for (band in active) {
                 val k = band * 4
                 val bq = co[band]
@@ -151,14 +162,33 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
      *  one triggered by a format change and leave the wrong band centres in effect. */
     private fun publish() {
         val co = buildCoeffs(gainsInput, sampleRate)
-        val active = co.indices.filter { co[it][0] != 1.0 || co[it][1] != 0.0 }.toIntArray()
+        // Derived from the SAME condition buildCoeffs uses to emit an identity biquad, instead of
+        // recovering it by testing two computed doubles for exact equality against 1.0/0.0 — that
+        // coupled the audio thread's fast path to floating-point equality, so a change to how the
+        // passthrough case is emitted would silently run every flat band through the cascade.
+        val active = (0 until EqSettings.BAND_COUNT)
+            .filter { isBandActive(it, gainsInput, sampleRate) }
+            .toIntArray()
+        val maxBoostDb = active.maxOfOrNull { gainsInput[it] }?.coerceAtLeast(0) ?: 0
+        val preamp = if (maxBoostDb == 0) 1.0 else 10.0.pow(-maxBoostDb / 20.0)
         generation++
-        tuning = Tuning(enabledInput, co, active, generation)
+        tuning = Tuning(enabledInput, co, active, preamp, generation)
     }
 
     private companion object {
         /** Q for each peaking band — moderate width, smooth overlap across the 7 bands. */
         const val Q = 1.0
+
+        /**
+         * Whether a band does anything at [sampleRate] — the single definition of the passthrough
+         * case, used both to emit identity coefficients and to build the active-band list.
+         *
+         * Bands at or above Nyquist are skipped: the RBJ formula is only valid for 0 < w0 < pi;
+         * at or beyond it the poles leave the unit circle and the filter self-oscillates. 0 dB is
+         * an exact passthrough, so it is skipped too.
+         */
+        fun isBandActive(band: Int, gainsDb: IntArray, sampleRate: Int): Boolean =
+            gainsDb.getOrElse(band) { 0 } != 0 && EqSettings.BAND_FREQS[band] * 2 < sampleRate
 
         fun identityCoeffs(): Array<DoubleArray> =
             Array(EqSettings.BAND_COUNT) { doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0) }
@@ -168,10 +198,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             Array(EqSettings.BAND_COUNT) { band ->
                 val gain = gainsDb.getOrElse(band) { 0 }
                 val f0 = EqSettings.BAND_FREQS[band]
-                // Skip (pass through) bands at/above Nyquist: the RBJ formula is only valid for
-                // 0 < w0 < π; at or beyond it the poles leave the unit circle and the filter
-                // self-oscillates. Also short-circuit 0 dB (an exact passthrough).
-                if (gain == 0 || f0 * 2 >= sampleRate) {
+                if (!isBandActive(band, gainsDb, sampleRate)) {
                     doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0)
                 } else {
                     val a = 10.0.pow(gain / 40.0)

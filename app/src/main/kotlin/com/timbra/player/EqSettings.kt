@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import android.content.Context
@@ -19,9 +20,13 @@ class EqSettings(context: Context) {
 
     /** The 7 band gains in dB, always length [BAND_COUNT], each clamped to the valid range. */
     fun gains(): IntArray {
+        // map, NOT mapNotNull: the list is POSITIONAL (index = band), so dropping an unparseable
+        // token shortened it and shifted every later band onto a gain that belonged to a
+        // different frequency — "3,x,5" gave band 1 the 5 dB meant for band 2. Substituting per
+        // slot keeps a corrupt token confined to its own band.
         val stored = prefs.getString(KEY_GAINS, null)
             ?.split(",")
-            ?.mapNotNull { it.toIntOrNull() }
+            ?.map { it.toIntOrNull() ?: 0 }
             ?: emptyList()
         return IntArray(BAND_COUNT) { i -> (stored.getOrNull(i) ?: 0).coerceIn(MIN_GAIN_DB, MAX_GAIN_DB) }
     }
@@ -39,8 +44,10 @@ class EqSettings(context: Context) {
         const val MIN_GAIN_DB = -15
         const val MAX_GAIN_DB = 15
 
-        /** Center frequencies (Hz) for the 7 bands — standard graphic-EQ spacing. */
-        val BAND_FREQS = intArrayOf(60, 150, 400, 1000, 2400, 6000, 15000)
+        /** Center frequencies (Hz) for the 7 bands — standard graphic-EQ spacing.
+         *  An immutable List, not an IntArray: an array reads like a constant but is writable,
+         *  and this one is shared process-wide by the DSP and the equalizer screen. */
+        val BAND_FREQS: List<Int> = listOf(60, 150, 400, 1000, 2400, 6000, 15000)
 
         private const val KEY_ENABLED = "eq_enabled"
         private const val KEY_GAINS = "eq_gains"

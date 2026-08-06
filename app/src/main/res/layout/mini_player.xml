@@ -95,7 +95,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:paddingHorizontal="14dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
         android:paddingTop="2dp"
         android:paddingBottom="6dp">
 

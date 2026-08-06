@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.search
 
 import android.os.Bundle
@@ -66,6 +67,10 @@ class SearchFragment : Fragment() {
         b.recycler.adapter = adapter
 
         b.searchInput.addTextChangedListener { onQuery(it?.toString().orEmpty()) }
+        // The layout declares imeOptions=actionSearch, which puts a Search key on the keyboard.
+        // Results are already live-debounced, so the useful thing for it to do is get the keyboard
+        // out of the way of the results this screen went to some trouble to raise.
+        b.searchInput.setOnEditorActionListener { _, _, _ -> hideKeyboard(); true }
         // Pop the keyboard as soon as Search opens so the user can type straight away. Posted so
         // it runs after the view is attached. Search is reached from the overflow menu, whose
         // popup holds window focus; until the activity window gets it back, showSoftInput is
@@ -185,6 +190,12 @@ class SearchFragment : Fragment() {
         et.requestFocus()
         requireContext().getSystemService(InputMethodManager::class.java)
             ?.showSoftInput(et, 0)
+    }
+
+    private fun hideKeyboard() {
+        val et = _b?.searchInput ?: return
+        requireContext().getSystemService(InputMethodManager::class.java)
+            ?.hideSoftInputFromWindow(et.windowToken, 0)
     }
 
     /** Detach the pending window-focus listener from the exact observer it was added to. */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui.folders
 
 import android.os.Bundle
@@ -34,6 +35,7 @@ import com.timbra.ui.player
 import com.timbra.ui.reloadOnLibraryChange
 import com.timbra.ui.trackNowPlaying
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -68,8 +70,8 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
     private var loaded = Loaded(emptyList(), emptyList(), null)
 
-    /** The library epoch the list was last built for (see the collector below). */
-    private var loadedEpoch = -1
+    /** The in-flight [load]; replacing it cancels the old one, so only the newest build commits. */
+    private var loadJob: Job? = null
 
     // On the first load after arriving here (e.g. the player's song-info tap opens the
     // playing track's folder), center that track in the list. Consumed once, so later
@@ -87,7 +89,10 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         folderPath = requireArguments().getString("folderPath", "")
-        folderTitle = requireArguments().getString("folderTitle", getString(R.string.cat_folders))
+        // ifBlank, not just a getString default: the nav-graph default is deliberately empty
+        // (NavInflater rejects a @string/... default), so the localised label is applied here.
+        folderTitle = requireArguments().getString("folderTitle", "")
+            .ifBlank { getString(R.string.cat_folders) }
         (requireActivity() as AppCompatActivity).supportActionBar?.title = folderTitle
 
         adapter = LibraryListAdapter(
@@ -111,7 +116,12 @@ class FolderTreeFragment : Fragment(), MenuProvider {
     }
 
     private fun load() {
-        viewLifecycleOwner.lifecycleScope.launch {
+        // Cancel the build already running: View-As, Sort and the library-epoch reload all call
+        // this, and while each commit is atomic the ORDERING was not — on a large folder the
+        // slower earlier build could finish last and overwrite the newer rows together with its
+        // playable list and folderContext, which is the mismatch [Loaded] exists to prevent.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val root = requireContext().repository.folderRoot()
             val viewAs = folderSort.viewAs
             val order = folderSort.sortOrder

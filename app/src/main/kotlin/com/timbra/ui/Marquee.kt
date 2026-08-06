@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.ui
 
 import android.text.TextUtils
@@ -44,9 +45,6 @@ class TitleMarquee(private val tv: TextView) {
      *  a genuinely new string restarts the loop, so callers should guard on change. */
     fun set(value: String) {
         text = value
-        tv.text = value
-        tv.ellipsize = null
-        tv.setHorizontallyScrolling(true)
         scrollOnce()
     }
 
@@ -80,6 +78,13 @@ class TitleMarquee(private val tv: TextView) {
     fun scrollOnce() {
         scroll = null
         val startedAt = ++epoch
+        // Re-apply the state a scroll needs rather than assuming [set] left it in place: [stop]
+        // deliberately undoes both, and this is the tap-to-replay entry point — MainActivity wires
+        // it to a persistent click listener on the SHARED toolbar title view, so a tap arriving
+        // after a stop was scrolling a layout clipped to the viewport and end-ellipsized, and
+        // nothing visibly moved.
+        tv.ellipsize = null
+        tv.setHorizontallyScrolling(true)
         tv.text = text // reset in case a prior interrupted run left it doubled
         tv.scrollTo(0, 0)
         tv.doOnLayout {

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.data
 
 import com.timbra.R
@@ -31,18 +32,34 @@ object SortDefaults {
 
 /** The ordering used by [sortedBy]; exposed so callers that only need the first/last track
  *  can use minWith/maxWith instead of sorting the whole list. */
-fun comparatorFor(order: SortOrder): Comparator<Track> = when (order) {
-    SortOrder.FILENAME -> compareBy(NATURAL) { it.fileName }
-    SortOrder.TITLE -> compareBy(NATURAL) { it.title }
-    // Disc first: MediaStore encodes disc*1000 + track, so without it a 2-disc album
-    // interleaves (disc1/t1, disc2/t1, disc1/t2, ...) once the disc is split off.
-    SortOrder.TRACK_NO -> compareBy<Track> { it.discNo }.thenBy { it.trackNo }.thenBy(NATURAL) { it.title }
-    SortOrder.ALBUM -> compareBy<Track, String>(NATURAL) { it.album }
-        .thenBy { it.discNo }.thenBy { it.trackNo }
-    SortOrder.ARTIST -> compareBy<Track, String>(NATURAL) { it.artist }.thenBy(NATURAL) { it.title }
-    SortOrder.DATE -> compareByDescending<Track> { it.dateAddedSec }
-    SortOrder.DURATION -> compareBy<Track> { it.durationMs }
+fun comparatorFor(order: SortOrder): Comparator<Track> {
+    val primary: Comparator<Track> = when (order) {
+        SortOrder.FILENAME -> compareBy(NATURAL) { it.fileName }
+        // displayTitle, not title: the lists render `title.ifBlank { fileName }`, so ordering on
+        // the raw tag put every untagged track in one block under the empty string — an order that
+        // matched nothing the user could see.
+        SortOrder.TITLE -> compareBy(NATURAL) { it.displayTitle }
+        // Disc first: MediaStore encodes disc*1000 + track, so without it a 2-disc album
+        // interleaves (disc1/t1, disc2/t1, disc1/t2, ...) once the disc is split off.
+        SortOrder.TRACK_NO -> compareBy<Track> { it.discOrFirst }
+            .thenBy { it.trackNo }.thenBy(NATURAL) { it.displayTitle }
+        SortOrder.ALBUM -> compareBy<Track, String>(NATURAL) { it.album }
+            .thenBy { it.discOrFirst }.thenBy { it.trackNo }
+        SortOrder.ARTIST -> compareBy<Track, String>(NATURAL) { it.artist }
+            .thenBy(NATURAL) { it.displayTitle }
+        SortOrder.DATE -> compareByDescending { it.dateAddedSec }
+        SortOrder.DURATION -> compareBy { it.durationMs }
+    }
+    // EVERY order ends with the same total tiebreak. A tie left the result depending on the order
+    // of the INPUT list (sortedWith is stable), which contradicts this file's contract that every
+    // folder entry point yields the identical queue — and ties are the norm, not the exception:
+    // dateAddedSec has one-second resolution so a bulk copy ties outright, durations collide
+    // freely, and titles, albums and artists all repeat. fileName then the unique track id makes
+    // all seven orders deterministic.
+    return primary.thenBy(NATURAL) { it.fileName }.thenBy { it.id }
 }
+
+private val Track.discOrFirst: Int get() = if (discNo <= 0) 1 else discNo
 
 fun List<Track>.sortedBy(order: SortOrder): List<Track> = sortedWith(comparatorFor(order))
 

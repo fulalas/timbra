@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package com.timbra.player
 
 import android.content.ComponentName
@@ -100,7 +101,10 @@ class PlayerConnection(private val context: Context) {
      * restore it (Shuffle-All replaces the whole timeline). Track ids + where playback was.
      * In-memory only: killing the app mid-shuffle keeps the shuffled queue.
      */
-    private data class PreShuffle(val ids: List<Long>, val index: Int, val positionMs: Long)
+    /** [currentId] rather than a position: the consumer resolves [ids] against the library with
+     *  `mapNotNull`, so a track deleted or rescanned away since shuffle was enabled shortens the
+     *  list — and a stored index then pointed at the wrong song, with coerceIn hiding it. */
+    private data class PreShuffle(val ids: List<Long>, val currentId: Long?, val positionMs: Long)
     private var preShuffle: PreShuffle? = null
 
     /** Index of the last "play next" enqueued item, so further enqueues append FIFO. */
@@ -311,7 +315,7 @@ class PlayerConnection(private val context: Context) {
     }
 
     private fun saveModes() {
-        store.saveModes(appShuffle.ordinal, appRepeat.ordinal)
+        store.saveModes(appShuffle, appRepeat)
         knownModesRevision = store.modesRevision()
     }
 
@@ -320,16 +324,16 @@ class PlayerConnection(private val context: Context) {
     }
 
     /**
-     * Adopt persisted [shuffleOrdinal]/[repeatOrdinal] play modes into the in-memory fields and
+     * Adopt persisted [shuffle]/[repeat] play modes into the in-memory fields and
      * mirror them onto the player. [forceShuffleOrder] = true (cold [restore], fresh queue)
      * always writes shuffleModeEnabled so the new timeline gets a shuffle order; false (live
      * reconnect) writes it only when it actually drifted, so an already-shuffled session isn't
      * needlessly reshuffled (see PlaybackService.onShuffleModeEnabledChanged / onTimelineChanged).
      */
-    private fun applyModes(shuffleOrdinal: Int, repeatOrdinal: Int, forceShuffleOrder: Boolean) {
+    private fun applyModes(shuffle: ShuffleMode, repeat: RepeatMode, forceShuffleOrder: Boolean) {
         val c = controller ?: return
-        appShuffle = ShuffleMode.entries.getOrElse(shuffleOrdinal) { ShuffleMode.OFF }
-        appRepeat = RepeatMode.entries.getOrElse(repeatOrdinal) { RepeatMode.OFF }
+        appShuffle = shuffle
+        appRepeat = repeat
         knownModesRevision = store.modesRevision()
         c.repeatMode = appRepeat.playerMode
         if (forceShuffleOrder || c.shuffleModeEnabled != appShuffle.playerShuffleEnabled) {
@@ -346,8 +350,8 @@ class PlayerConnection(private val context: Context) {
         enqueuedFlags: List<Boolean>,
         index: Int,
         positionMs: Long,
-        shuffleOrdinal: Int,
-        repeatOrdinal: Int,
+        shuffle: ShuffleMode,
+        repeat: RepeatMode,
     ) {
         val c = controller ?: return
         markQueueReplaced(null)
@@ -359,11 +363,19 @@ class PlayerConnection(private val context: Context) {
         )
         // Keep FIFO append working after restore: further enqueues go after the last one.
         enqueueEnd = enqueuedFlags.indexOfLast { it }
-        applyModes(shuffleOrdinal, repeatOrdinal, forceShuffleOrder = true)
+        applyModes(shuffle, repeat, forceShuffleOrder = true)
         // If shuffle is being restored as ON, anchor the snapshot on the restored queue so a
         // later shuffle-off keeps this queue (the original pre-shuffle one wasn't persisted).
         preShuffle = if (appShuffle != ShuffleMode.OFF) {
-            PreShuffle(tracks.map { it.id }, start, positionMs)
+            // Excluding the enqueued items, exactly as [takeShuffleSnapshot] does and for the same
+            // reason: the play-next block travels across mode changes on its own, so snapshotting
+            // it here too made a later shuffle-off restore those songs TWICE — once as plain list
+            // entries and once as the carried block.
+            PreShuffle(
+                tracks.filterIndexed { i, _ -> !enqueuedFlags.getOrElse(i) { false } }.map { it.id },
+                tracks.getOrNull(start)?.id,
+                positionMs,
+            )
         } else null
         c.prepare()
     }
@@ -383,8 +395,8 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         if (c.mediaItemCount == 0) return
         if (store.modesRevision() == knownModesRevision) return
-        val (shuffleOrdinal, repeatOrdinal) = store.loadModes()
-        applyModes(shuffleOrdinal, repeatOrdinal, forceShuffleOrder = false)
+        val (shuffle, repeat) = store.loadModes()
+        applyModes(shuffle, repeat, forceShuffleOrder = false)
         // Seed the shuffle-off snapshot from the live queue (the original pre-shuffle order
         // wasn't persisted) so a later shuffle-off can rebuild it; never clobber a live one.
         if (appShuffle == ShuffleMode.OFF) preShuffle = null
@@ -459,7 +471,7 @@ class PlayerConnection(private val context: Context) {
         // follow the NEW queue (turning shuffle off should keep the user here, sequential),
         // not restore whatever list shuffle happened to be enabled in long ago.
         preShuffle = if (appShuffle != ShuffleMode.OFF) {
-            PreShuffle(tracks.map { it.id }, start, 0)
+            PreShuffle(tracks.map { it.id }, tracks.getOrNull(start)?.id, 0)
         } else null
         c.setMediaItems(tracks.map { it.toMediaItem(context) }, start, 0)
         c.prepare()
@@ -669,11 +681,8 @@ class PlayerConnection(private val context: Context) {
         // [spliceEnqueued]), so snapshotting it here too would restore those songs twice — once
         // as plain list entries and once as the carried play-next block.
         val plain = (0 until c.mediaItemCount).filter { !c.getMediaItemAt(it).isEnqueued }
-        val ids = plain.map { c.getMediaItemAt(it).trackId ?: -1L }
-        // Where the current song lands once the enqueued entries are dropped.
-        val index = plain.count { it < c.currentMediaItemIndex }
-            .coerceAtMost(maxOf(0, ids.size - 1))
-        preShuffle = PreShuffle(ids, index, c.currentPosition.coerceAtLeast(0))
+        val ids = plain.mapNotNull { c.getMediaItemAt(it).trackId }
+        preShuffle = PreShuffle(ids, c.currentMediaItem?.trackId, c.currentPosition.coerceAtLeast(0))
     }
 
     /**
@@ -773,7 +782,7 @@ class PlayerConnection(private val context: Context) {
             rebuildAroundCurrent(c, tracks, pos, carried)
         } else {
             // Current song isn't in the original queue (played into shuffle) — restore as saved.
-            val at = snap.index.coerceIn(0, tracks.size - 1)
+            val at = tracks.indexOfFirst { it.id == snap.currentId }.coerceAtLeast(0)
             c.setMediaItems(tracks.map { it.toMediaItem(context) }, at, snap.positionMs)
             c.prepare()
             spliceEnqueued(c, carried, at + 1)
@@ -890,8 +899,11 @@ class PlayerConnection(private val context: Context) {
             title = md.title?.toString() ?: "",
             artist = md.artist?.toString() ?: "",
             album = md.albumTitle?.toString() ?: "",
-            albumId = md.extras?.getLong(KEY_ALBUM_ID, -1L) ?: -1L,
-            filePath = md.extras?.getString(KEY_PATH) ?: "",
+            // Through the accessors, not the bundle: MediaItems.kt exists precisely to be the
+            // single decode point for these keys. (title/artist/album stay on c.mediaMetadata,
+            // which also carries in-band metadata updates.)
+            albumId = item.albumIdExtra,
+            filePath = item.pathExtra,
             isPlaying = c.isPlaying,
             positionMs = c.currentPosition.coerceAtLeast(0),
             durationMs = c.duration.coerceAtLeast(0),
