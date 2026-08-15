@@ -271,6 +271,53 @@ class MediaRepository(context: Context) {
         return ids
     }
 
+    // --- Change detection ---
+
+    /**
+     * A marker of the audio table's current state, compared against the previous value to decide
+     * whether a refresh is needed at all ([com.timbra.TimbraApp.refreshLibraryIfChanged]).
+     * Deliberately NOT cached — reading through to MediaStore is the entire point.
+     *
+     * Row count and the newest DATE_ADDED / DATE_MODIFIED catch an add, a delete or an in-place
+     * retag. The path fold catches what they can't: a same-volume MOVE or RENAME changes neither
+     * the count nor the file's mtime, and in a folder-first player that is the change that matters
+     * most — the folder tree and the traversal list would otherwise keep serving a hierarchy that
+     * no longer exists. Summed (not accumulated in order), since the row order is unspecified.
+     *
+     * Everything is folded here rather than asked for as `count(*)`/`max(...)`: MediaStore
+     * validates the projection on Android 10+ and rejects anything that isn't a real column, so
+     * SQL aggregates are unavailable. That makes this O(rows) — one cursor walk on the IO
+     * dispatcher, roughly an order of magnitude under [queryTracks] (which reads eleven columns,
+     * four of them strings, and allocates a [Track] and a Uri per row), but NOT free: it is why
+     * the caller compares before refreshing instead of refreshing outright.
+     */
+    suspend fun libraryFingerprint(): String = withContext(Dispatchers.IO) {
+        var count = 0
+        var newestAdded = 0L
+        var newestModified = 0L
+        var pathFold = 0
+        resolver.query(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(
+                MediaStore.Audio.Media.DATE_ADDED,
+                MediaStore.Audio.Media.DATE_MODIFIED,
+                MediaStore.Audio.Media.DATA,
+            ),
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0", null, null,
+        )?.use { c ->
+            val addedCol = c.getColumnIndex(MediaStore.Audio.Media.DATE_ADDED)
+            val modifiedCol = c.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
+            val dataCol = c.getColumnIndex(MediaStore.Audio.Media.DATA)
+            while (c.moveToNext()) {
+                count++
+                if (addedCol >= 0) newestAdded = maxOf(newestAdded, c.getLong(addedCol))
+                if (modifiedCol >= 0) newestModified = maxOf(newestModified, c.getLong(modifiedCol))
+                if (dataCol >= 0) pathFold += c.getString(dataCol)?.hashCode() ?: 0
+            }
+        }
+        "$count/$newestAdded/$newestModified/$pathFold"
+    }
+
     // --- Core track query ---
 
     private fun queryTracks(): List<Track> {

@@ -91,6 +91,11 @@
 
     <!-- Search -->
     <string name="menu_search">Search</string>
+    <string name="menu_rescan">Rescan</string>
+    <plurals name="rescan_done">
+        <item quantity="one">Found %1$d song</item>
+        <item quantity="other">Found %1$d songs</item>
+    </plurals>
     <string name="search_hint">Search all songs</string>
     <string name="search_prompt">Type to search all songs</string>
     <string name="search_no_results">No results</string>

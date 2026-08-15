@@ -150,6 +150,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Backstop for library changes this process didn't witness — see
+        // TimbraApp.refreshLibraryIfChanged. It only re-queries the library when MediaStore's own
+        // marker has moved, which is what makes it affordable on every foreground return.
+        //
+        // Gated on the permission, and not only as an optimisation: below API 29 MediaProvider
+        // declares android:readPermission, so querying it before the grant throws SecurityException
+        // — and onCreate merely QUEUES the request, so on a first run onStart gets here first. The
+        // throw would leave this bare launch and take the process down on launch.
+        if (hasAudioPermission()) lifecycleScope.launch { app.refreshLibraryIfChanged() }
         player.connect {
             if (!player.isQueueEmpty()) openPlayerOnce() else maybeRestorePlayback()
         }
@@ -201,7 +210,7 @@ class MainActivity : AppCompatActivity() {
         navController.navigate(R.id.playerFragment, null, playerNavOptions)
     }
 
-    /** Search + Equalizer are available from every screen's overflow menu (incl. the player). */
+    /** Search + Equalizer + Rescan are available from every screen's overflow (incl. the player). */
     private fun addGlobalMenu() = addMenuProvider(object : MenuProvider {
         override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
             inflater.inflate(R.menu.menu_global, menu)
@@ -210,10 +219,13 @@ class MainActivity : AppCompatActivity() {
         override fun onPrepareMenu(menu: Menu) {
             // On the equalizer screen the overflow shows only its own Reset action.
             val onEqScreen = navController.currentDestination?.id == R.id.equalizerFragment
-            globalMenuTargets.keys.forEach { menu.findItem(it)?.isVisible = !onEqScreen }
+            (globalMenuTargets.keys + R.id.action_rescan).forEach {
+                menu.findItem(it)?.isVisible = !onEqScreen
+            }
         }
 
         override fun onMenuItemSelected(item: MenuItem): Boolean {
+            if (item.itemId == R.id.action_rescan) { rescanLibrary(); return true }
             val target = globalMenuTargets[item.itemId] ?: return false
             if (navController.currentDestination?.id != target) {
                 navController.navigate(target, null, navOptions { launchSingleTop = true })
@@ -221,6 +233,30 @@ class MainActivity : AppCompatActivity() {
             return true
         }
     })
+
+    /**
+     * Re-read the library now, unconditionally, and report the result — the manual escape hatch
+     * for the cases the observer and the foreground probe can't cover.
+     *
+     * It cannot make the system SCAN: there is no public API to rescan a volume, so files written
+     * without going through MediaStore (`adb push`, a file manager doing raw writes) stay invisible
+     * to every app until the platform's own idle scan picks them up. The toast reports the count so
+     * a rescan that legitimately found nothing new doesn't look like a broken button.
+     */
+    private fun rescanLibrary() {
+        // Nothing to read without the permission, and querying anyway would throw below API 29
+        // (see onStart) — ask for it instead; the grant callback refreshes.
+        if (!hasAudioPermission()) { ensureAudioPermission(firstCreate = false); return }
+        app.refreshLibrary()
+        lifecycleScope.launch {
+            val n = repository.allTracks().size
+            Toast.makeText(
+                this@MainActivity,
+                resources.getQuantityString(R.plurals.rescan_done, n, n),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
 
     /** Open the full player (single top, never stacked). */
     fun openPlayer() = navController.navigate(R.id.playerFragment, null, playerNavOptions)
@@ -474,6 +510,9 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             Manifest.permission.READ_MEDIA_AUDIO
         else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, audioPermission()) == PackageManager.PERMISSION_GRANTED
 
     private fun ensureAudioPermission(firstCreate: Boolean) {
         val wanted = buildList {

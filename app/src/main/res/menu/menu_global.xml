@@ -9,4 +9,12 @@
         android:id="@+id/action_equalizer"
         android:title="@string/menu_equalizer"
         app:showAsAction="never" />
+    <!-- orderInCategory, not insertion order: this provider is added in the Activity's onCreate,
+         so without it Rescan would land ABOVE every screen's own items (Sort, View As) instead of
+         last. The Library's About is ordered after it (menu_library) to keep Rescan above About. -->
+    <item
+        android:id="@+id/action_rescan"
+        android:orderInCategory="100"
+        android:title="@string/menu_rescan"
+        app:showAsAction="never" />
 </menu>
