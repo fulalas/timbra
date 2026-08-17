@@ -20,11 +20,6 @@ import com.timbra.eqSettings
 import com.timbra.player.EqSettings
 import com.timbra.ui.player
 
-/**
- * The 7-band graphic equalizer, opened from the global 3-dot menu. Reads/writes the persisted
- * [EqSettings] and pushes every change to the live DSP via
- * [com.timbra.player.PlayerConnection.applyEq]. Its own overflow offers a single action, Reset.
- */
 class EqualizerFragment : Fragment(), MenuProvider {
 
     private var _b: FragmentEqualizerBinding? = null
@@ -32,7 +27,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
 
     private val settings get() = requireContext().eqSettings
 
-    /** One inflated row binding per band; index-aligned with [EqSettings.BAND_FREQS]. */
     private var rows: List<ItemEqBandBinding> = emptyList()
 
     /**
@@ -102,8 +96,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
         b.eqEnableLabel.setText(if (enabled) R.string.eq_on else R.string.eq_off)
     }
 
-    // --- Overflow menu: only Reset ---
-
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
         inflater.inflate(R.menu.menu_eq, menu)
     }
@@ -145,10 +137,8 @@ class EqualizerFragment : Fragment(), MenuProvider {
         }
     }
 
-    /** "0", "+3", "-5" (dB). */
     private fun gainLabel(db: Int): String = if (db > 0) "+$db" else db.toString()
 
-    /** "60", "400", "1k", "2.4k", "15k". */
     private fun freqLabel(hz: Int): String = when {
         hz < 1000 -> hz.toString()
         hz % 1000 == 0 -> "${hz / 1000}k"

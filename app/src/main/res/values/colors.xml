@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Matte dark theme (classic matte v2 look). Pure black window for OLED. -->
     <color name="pa_window">#000000</color>
     <color name="pa_surface">#151515</color>
     <color name="pa_deck_top">#2A2A2A</color>
@@ -8,7 +7,6 @@
     <color name="pa_row_pressed">#26313A</color>
     <color name="pa_now_playing">#228C9EFF</color>
 
-    <!-- Cool blue-white glow accent taken from the matte skin highlights. -->
     <color name="pa_accent">#C5CAE9</color>
     <color name="pa_accent_glow">#8C9EFF</color>
     <!-- Zero-alpha accent. Gradient stops interpolate non-premultiplied, so fading to

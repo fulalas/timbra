@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One equalizer band column: gain readout (top), vertical fader (fills), frequency (bottom).
-     Inflated 7 times into fragment_equalizer's bands row. The fader is a normal SeekBar rotated
-     -90° at runtime (see EqualizerFragment) — reliable across devices, unlike canvas rotation. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="0dp"
     android:layout_height="match_parent"

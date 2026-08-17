@@ -31,10 +31,8 @@ class RiffMpegExtractor : Extractor {
 
     private val delegate = Mp3Extractor()
 
-    /** File offset of the `data` chunk payload; -1 until [read] has located it. */
     private var dataStart = -1L
 
-    /** True once the read position is inside the MPEG payload, so the delegate can take over. */
     private var atPayload = false
 
     override fun sniff(input: ExtractorInput): Boolean {
@@ -79,10 +77,6 @@ class RiffMpegExtractor : Extractor {
 
     override fun release() = delegate.release()
 
-    /**
-     * Advance the read position from the start of the file to the first MPEG frame, i.e. the
-     * `data` chunk payload. Returns false if the file ends before one is found.
-     */
     private fun skipToPayload(input: ExtractorInput): Boolean {
         // allowEndOfInput on EVERY read and skip. The header read below already did this, but the
         // two skips used the throwing overload — so a truncated file (or a chunk header lying

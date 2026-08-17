@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Landscape overrides: the transport shares its row with the art pane, so the buttons are a
-     little smaller. The layouts themselves are shared (see layout/player_controls.xml). -->
 <resources>
     <dimen name="pa_player_pad_start">8dp</dimen>
     <dimen name="pa_player_pad_end">24dp</dimen>

@@ -6,7 +6,6 @@ import androidx.annotation.StringRes
 import androidx.media3.common.Player
 import com.timbra.R
 
-/** Cycle to the next entry, wrapping — the ONE cycling rule both mode buttons use. */
 inline fun <reified T : Enum<T>> T.cycleNext(): T {
     val all = enumValues<T>()
     return all[(ordinal + 1) % all.size]
@@ -22,17 +21,9 @@ inline fun <reified T : Enum<T>> T.cycleNext(): T {
 inline fun <reified T : Enum<T>> enumByName(name: String?, default: T): T =
     if (name == null) default else enumValues<T>().firstOrNull { it.name == name } ?: default
 
-/**
- * App-level shuffle modes.
- * OFF -> CURRENT (shuffle songs in the current list) -> ALL (shuffle every song) -> OFF.
- * Returning to OFF restores the pre-shuffle queue (see PlayerConnection), so cycling through
- * the modes and back is non-destructive. Enabling shuffle regenerates a fresh random order.
- */
 enum class ShuffleMode(
     @DrawableRes val iconRes: Int,
     @StringRes val titleRes: Int,
-    /** Null when the mode needs no explanatory second line — absence is modelled in the type,
-     *  so a caller cannot hand 0 to getString and get a NotFoundException. */
     @StringRes val subtitleRes: Int?,
 ) {
     OFF(R.drawable.matte_shuffle_none, R.string.shuffle_off, null),
@@ -50,14 +41,9 @@ enum class ShuffleMode(
     fun narrowedToFolder(): ShuffleMode = if (this == ALL) CURRENT else this
 }
 
-/**
- * App-level repeat modes.
- * OFF -> LIST (loop list) -> ADVANCE (play next list at end) -> SONG (loop song) -> OFF.
- */
 enum class RepeatMode(
     @DrawableRes val iconRes: Int,
     @StringRes val titleRes: Int,
-    /** Null when the mode needs no explanatory second line (see [ShuffleMode.subtitleRes]). */
     @StringRes val subtitleRes: Int?,
     val playerMode: Int,
 ) {

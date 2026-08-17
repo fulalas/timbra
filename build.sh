@@ -1,28 +1,8 @@
 #!/bin/bash
-# Build Timbra (pure Kotlin/Android; no NDK/Go/Rust — the FFmpeg decoders ship prebuilt
-# inside the nextlib AAR). Provisions its own toolchain when none is available.
-#
-# Usage: ./build.sh [gradle-task] [--no-install]   (default task: assembleRelease)
-#   When a device is connected (adb, in "device" state), the built APK is installed
-#   automatically afterwards (in-place update via ./install.sh); --no-install skips it.
-#
-# Toolchain resolution, in order:
-#   1. $TIMBRA_ENV pointing at an env script to source
-#   2. ./toolchain/env.sh   (repo-local toolchain, incl. one this script provisioned)
-#   3. ../toolchain/env.sh  (a shared sibling toolchain next to the repo)
-#   4. java + gradle + $ANDROID_HOME already usable on PATH
-#   5. otherwise SELF-PROVISION into ./toolchain: downloads JDK $JDK_FEATURE,
-#      Gradle $GRADLE_VERSION, Android cmdline-tools, then installs platform-tools,
-#      platforms;android-$COMPILE_SDK and build-tools;$BUILD_TOOLS. Each component is
-#      guarded by an existence check, so a partial/broken toolchain heals itself and
-#      re-runs are fast no-ops. (Downloads are Linux x86_64; on other hosts provide a
-#      toolchain via TIMBRA_ENV instead.)
 set -eo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLCHAIN="${TOOLCHAIN_DIR:-$DIR/toolchain}"
 
-# Args: an optional gradle task (positional) plus flags. Keeps `./build.sh
-# assembleDebug` working while adding --no-install.
 TASK=""
 INSTALL=1
 for arg in "$@"; do
@@ -48,8 +28,6 @@ CMDLINE_URL="https://dl.google.com/android/repository/commandlinetools-linux-${C
 log() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# Resolves adb (prefer the toolchain copy) and reports whether at least one
-# device is connected and ready ("device" state — not unauthorized/offline).
 adb_device_ready() {
     local adb="${ANDROID_HOME:+$ANDROID_HOME/platform-tools/adb}"
     [ -x "$adb" ] || adb="$(command -v adb 2>/dev/null || true)"
@@ -111,9 +89,7 @@ provision_toolchain() {
             || die "sdkmanager failed — see $TOOLCHAIN/sdkmanager.log"
     fi
 
-    # Write the env script so the next run takes the fast path (resolution step 2).
     cat > "$TOOLCHAIN/env.sh" <<EOF
-# Build environment for Timbra (paths relative to this script; written by build.sh)
 T="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 export JAVA_HOME=\$T/jdk
 export ANDROID_HOME=\$T/android-sdk
@@ -122,7 +98,6 @@ EOF
     echo "    toolchain ready: $TOOLCHAIN (env: $TOOLCHAIN/env.sh)"
 }
 
-# --- Toolchain resolution ---
 if [ -n "$TIMBRA_ENV" ] && [ -f "$TIMBRA_ENV" ]; then
     source "$TIMBRA_ENV"
 elif [ -f "$TOOLCHAIN/env.sh" ]; then
@@ -137,12 +112,10 @@ have_build_env || die "Toolchain still incomplete (java/gradle/ANDROID_HOME) —
 
 GRADLE="${GRADLE:-gradle}"
 
-# Point AGP at the SDK regardless of the caller's environment.
 if [ -n "$ANDROID_HOME" ]; then
     echo "sdk.dir=$ANDROID_HOME" > "$DIR/local.properties"
 fi
 
-# App name (single source of truth: appName in gradle.properties), lowercased for filenames.
 NAME=$(sed -n 's/^appName=//p' "$DIR/gradle.properties" | tr -d '\r')
 NAME_LC=$(echo "${NAME:-app}" | tr '[:upper:]' '[:lower:]')
 
@@ -154,8 +127,6 @@ cd "$DIR"
 # rebuild on EVERY change" workflow. Set TIMBRA_GRADLE_FLAGS=--no-daemon for a one-shot/CI build.
 "$GRADLE" "$TASK" ${TIMBRA_GRADLE_FLAGS:-}
 
-# Copy the built APK to the repo root, named "<app>-<version>.apk" (single sources of
-# truth: appName in gradle.properties, versionName in app/build.gradle.kts).
 VERSION=$(sed -n 's/.*versionName *= *"\(.*\)".*/\1/p' "$DIR/app/build.gradle.kts")
 # Pick the APK for the variant we actually built (avoids grabbing a stale debug/release).
 case "$TASK" in
@@ -167,7 +138,6 @@ esac
 # guard below (written for exactly that case) unreachable.
 BUILT=$(find "$DIR/app/build/outputs/apk/$VARIANT" -name '*.apk' 2>/dev/null | head -1 || true)
 if [ -n "$BUILT" ]; then
-    # Remove older root APKs so only the current version stays at the root.
     find "$DIR" -maxdepth 1 -name "${NAME_LC}-*.apk" ! -name "*-debug.apk" -delete
     [ "$VARIANT" = release ] || find "$DIR" -maxdepth 1 -name "${NAME_LC}-*-${VARIANT}.apk" -delete
     # The VARIANT is in the debug filename: without it a debug build silently replaced the release

@@ -7,14 +7,6 @@ import android.widget.TextView
 import com.timbra.R
 import com.timbra.player.UiPlayback
 
-/**
- * The transport wiring shared by the mini-player and the full player: a seek bar that reports
- * drags, the position/duration clocks, and the play/pause icon.
- *
- * Both screens render the same [UiPlayback], and their hand-written copies of this had already
- * drifted — so a fix to the seek behaviour, the duration clamp or the icon states landed on one
- * screen and not the other.
- */
 class TransportBinder(
     private val seek: SeekBar,
     private val position: TextView,

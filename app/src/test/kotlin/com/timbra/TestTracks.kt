@@ -5,12 +5,6 @@ import android.net.Uri
 import com.timbra.data.model.Track
 import org.mockito.Mockito
 
-/**
- * Track factory for the pure-logic tests.
- *
- * The only reason a mock appears here is [Track.uri]: the framework stub on the unit-test
- * classpath cannot produce a real [Uri], and none of the logic under test reads it.
- */
 object TestTracks {
 
     private val FAKE_URI: Uri = Mockito.mock(Uri::class.java)

@@ -4,10 +4,6 @@ package com.timbra.player
 import android.content.Context
 import androidx.media3.common.Player
 
-/**
- * Persists the current queue (as track ids), the playing index, position and play
- * modes to SharedPreferences so playback can be restored after the app is closed.
- */
 class PlaybackStateStore(context: Context) {
 
     private val prefs =
@@ -60,7 +56,6 @@ class PlaybackStateStore(context: Context) {
             .apply()
     }
 
-    /** Monotonic counter of mode writes (see [saveModes]). */
     fun modesRevision(): Int = prefs.getInt(KEY_MODES_REV, 0)
 
     // Pre-sized joins: these run on the main thread (from a Player.Listener callback), and a
@@ -83,27 +78,15 @@ class PlaybackStateStore(context: Context) {
         return sb.toString()
     }
 
-    /** Cheap, frequent write on transitions / play-pause / stop. */
     private fun savePosition(index: Int, positionMs: Long) {
         prefs.edit().putInt(KEY_INDEX, index).putLong(KEY_POS, positionMs).apply()
     }
 
-    /** Checkpoint [player]'s current index + position; a no-op on an empty timeline. */
     fun checkpoint(player: Player) {
         if (player.mediaItemCount == 0) return
         savePosition(player.currentMediaItemIndex, player.currentPosition.coerceAtLeast(0))
     }
 
-    /**
-     * The saved snapshot, or null when there is none (or it is unreadable).
-     *
-     * Everything here is POSITIONAL — [Saved.index] and [Saved.enqueuedIndices] are positions in
-     * [Saved.trackIds] — so a single unparseable token invalidates the whole snapshot instead of
-     * being dropped: silently shortening the list would shift the index onto a different song and
-     * mismark the play-next block, with nothing reported. The index is clamped here too, because
-     * [savePosition] writes it on its own (transitions, play/pause, stop) without rewriting the
-     * id list, so a checkpoint taken after a timeline shrink can leave it past the end.
-     */
     fun load(): Saved? {
         val tokens = prefs.getString(KEY_IDS, null)
             ?.split(",")

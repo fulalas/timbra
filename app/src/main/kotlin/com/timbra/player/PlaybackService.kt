@@ -35,27 +35,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/**
- * Hosts the ExoPlayer instance and a MediaSession so playback survives the UI and
- * shows system/lock-screen controls. Audio decoding is FFmpeg-backed via nextlib's
- * [NextRenderersFactory], which ships decoders for all ABIs (incl. arm64) — the
- * modern replacement for the original 32-bit-only native engine.
- *
- * It also OWNS the Advance-List folder continuation for every non-gesture trigger (a queue that
- * ends, a last track that errors or wedges, and Next/Previous from anywhere — the app, the
- * notification, the lock screen, a Bluetooth remote). That used to be split with the UI on a
- * "is a controller attached" flag, which lost the advance whenever the app was backgrounded in
- * the wrong millisecond and skipped it entirely for system transport commands.
- */
 @UnstableApi
 class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
-    /** The real player, kept separately because the session wraps it in [AdvancePlayer]. */
     private var exoPlayer: ExoPlayer? = null
 
-    /** 7-band equalizer DSP spliced into ExoPlayer's audio pipeline (see [EqRenderersFactory]). */
     private val eqProcessor = EqualizerAudioProcessor()
 
     /**
@@ -67,7 +53,6 @@ class PlaybackService : MediaSessionService() {
      */
     private val store get() = app.playbackStore
 
-    /** Scope for the background Advance-List folder lookup (folder tree read off the main thread). */
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val saveHandler = Handler(Looper.getMainLooper())
@@ -88,7 +73,6 @@ class PlaybackService : MediaSessionService() {
 
     private val stallHandler = Handler(Looper.getMainLooper())
 
-    /** Position when the current buffering spell began, to tell a stall from slow progress. */
     private var stallMark = 0L
 
     // --- Custom shuffle engine ---
@@ -152,8 +136,6 @@ class PlaybackService : MediaSessionService() {
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                // Checkpoint now (captures the exact pause point), then keep checkpointing
-                // on an interval while playing — the runnable reschedules itself.
                 saveHandler.removeCallbacks(positionSaver)
                 saveHandler.post(positionSaver)
             }
@@ -163,7 +145,6 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                // A track loaded and played: the run of unplayable files (if any) is over.
                 if (playbackState == Player.STATE_READY) errorSkips = 0
                 // The queue ended: roll into the next folder. Owned here whether or not the UI
                 // is attached — deciding that once, at the instant STATE_ENDED is observed, meant
@@ -207,9 +188,6 @@ class PlaybackService : MediaSessionService() {
             }
         })
 
-        // Publish the DECODED audio format (sample rate / bitrate) to controllers through
-        // the session extras — MediaController exposes no other way to read it, and only
-        // the service-side ExoPlayer knows the real values.
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onAudioInputFormatChanged(
                 eventTime: AnalyticsListener.EventTime,
@@ -298,11 +276,6 @@ class PlaybackService : MediaSessionService() {
         return advanceFolder(player, forward)
     }
 
-    /**
-     * Grants the UI a single custom command, [CMD_APPLY_EQ], so the equalizer screen can push
-     * live band changes to the DSP. The UI is the source of truth (it persists to [EqSettings]);
-     * this just reapplies what it sends.
-     */
     private val eqCallback = object : MediaSession.Callback {
         override fun onConnect(
             session: MediaSession,
@@ -343,7 +316,6 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** A [NextRenderersFactory] that splices the equalizer DSP into the audio sink. */
     private inner class EqRenderersFactory(context: Context) : NextRenderersFactory(context) {
         override fun buildAudioSink(
             context: Context,
@@ -438,7 +410,6 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** The queue's media ids in timeline order — changes only when the items themselves change. */
     private fun mediaIds(player: ExoPlayer): List<String> =
         (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
 
@@ -486,7 +457,6 @@ class PlaybackService : MediaSessionService() {
         return true
     }
 
-    /** Start a fresh shuffle session anchored on the currently-playing song. */
     private fun resetShuffleSession(player: ExoPlayer) {
         val count = player.mediaItemCount
         lastIds = mediaIds(player)
@@ -502,7 +472,6 @@ class PlaybackService : MediaSessionService() {
         applyShuffleOrder(player)
     }
 
-    /** React to the current song changing: extend the path forward, or step back on Previous. */
     private fun onShuffleAdvance(player: ExoPlayer, cur: Int) {
         if (shufHistory.isEmpty() || player.mediaItemCount == 0) {
             resetShuffleSession(player); return
@@ -549,8 +518,6 @@ class PlaybackService : MediaSessionService() {
         val queued = (0 until count).filter { it !in shufPlayed && player.getMediaItemAt(it).isEnqueued }
         val queuedSet = queued.toHashSet()
         val unplayed = (0 until count).filter { it !in shufPlayed && it !in queuedSet }
-        // With nothing left unplayed there is no random pick to make: the enqueued songs (if
-        // any) are the whole remainder.
         val chosen = if (unplayed.isEmpty()) emptyList() else listOf(unplayed.random())
         val rest = unplayed.filter { it !in chosen }.shuffled()
         // Set, not the prefix List: `it !in prefix` was a linear scan, making this line
@@ -571,12 +538,6 @@ class PlaybackService : MediaSessionService() {
         player.setShuffleOrder(DefaultShuffleOrder(order, System.nanoTime()))
     }
 
-    /**
-     * Roll into the neighbouring folder, via the one shared implementation ([FolderAdvance]).
-     *
-     * [stillWanted] is re-checked after the (async) folder-tree lookup, together with the media
-     * id, so a queue that moved on in the meantime is never stomped.
-     */
     private fun advanceFolder(
         player: Player,
         forward: Boolean,
@@ -608,7 +569,6 @@ class PlaybackService : MediaSessionService() {
         serviceScope.cancel()
         saveHandler.removeCallbacks(positionSaver)
         stallHandler.removeCallbacks(endStallCheck)
-        // Final checkpoint before the player goes away, so a cold start resumes exactly here.
         exoPlayer?.let { store.checkpoint(it) }
         mediaSession?.run {
             player.release()
@@ -622,26 +582,19 @@ class PlaybackService : MediaSessionService() {
     companion object {
         private const val POSITION_SAVE_INTERVAL_MS = 5_000L
 
-        /** Ceiling on consecutive stuck-track skips (see [skipStuckTrack]). */
         private const val MAX_ERROR_SKIPS = 25
 
-        /** How long a non-progressing buffer must persist before it counts as a stall. */
         private const val END_STALL_TIMEOUT_MS = 2_500L
 
-        /** Only a stall this close to the end of the track is treated as the track finishing. */
         private const val END_STALL_WINDOW_MS = 5_000L
 
-        /** Session-extras keys carrying the decoded audio format to the UI. */
         const val EXTRA_SAMPLE_RATE = "tb_sample_rate"
         const val EXTRA_BITRATE = "tb_bitrate"
 
-        /** Custom command: reapply the equalizer. Args carry [EXTRA_EQ_ENABLED] + [EXTRA_EQ_GAINS]. */
         const val CMD_APPLY_EQ = "com.timbra.EQ_APPLY"
         const val EXTRA_EQ_ENABLED = "tb_eq_enabled"
         const val EXTRA_EQ_GAINS = "tb_eq_gains"
 
-        /** Custom command: step to the neighbouring folder (Advance-List). Args carry
-         *  [EXTRA_ADVANCE_FORWARD]. See the [eqCallback] handler for why it exists. */
         const val CMD_ADVANCE_FOLDER = "com.timbra.ADVANCE_FOLDER"
         const val EXTRA_ADVANCE_FORWARD = "tb_advance_forward"
     }

@@ -30,11 +30,6 @@ class PlaybackSession {
 
     private val state = AtomicReference(State(0, null))
 
-    /**
-     * Path of the folder the current queue was loaded from by a folder tap/jump/advance; null
-     * when the queue came from anywhere else. THE Advance-List anchor — when it is null the
-     * callers fall back to the playing file's own directory, which is always a song-folder.
-     */
     val folderContext: String? get() = state.get().folderContext
 
     /**
@@ -48,7 +43,6 @@ class PlaybackSession {
     /** Serializes folder navigation across both owners, so two moves can't interleave. */
     val folderNavLock = Mutex()
 
-    /** Record a queue replacement; [folderContext] is the folder it came from, or null. */
     fun queueReplaced(folderContext: String?) {
         state.updateAndGet { State(it.generation + 1, folderContext) }
     }

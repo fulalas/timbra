@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Background for the currently-playing list row: translucent accent + ripple. -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
     android:color="@color/pa_row_pressed">
     <item>

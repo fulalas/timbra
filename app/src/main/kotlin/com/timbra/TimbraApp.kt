@@ -28,31 +28,20 @@ import kotlinx.coroutines.sync.withLock
 class TimbraApp : Application() {
     val repository: MediaRepository by lazy { MediaRepository(this) }
 
-    /** Persisted equalizer state, shared by the equalizer screen and (indirectly) the service. */
     val eqSettings: EqSettings by lazy { EqSettings(this) }
 
-    /** Persisted queue/position/modes, shared by the UI connection and the service — they use
-     *  it as their common channel, so they must not hold separate instances. */
     val playbackStore: PlaybackStateStore by lazy { PlaybackStateStore(this) }
 
-    /** Queue facts shared by the UI connection and the service (see [PlaybackSession]). */
     val session = PlaybackSession()
 
-    /** The folder browser's persisted order, which is also the order folder QUEUES are built
-     *  in — see [FolderSort]. */
     val folderSort: FolderSort by lazy { FolderSort(this) }
 
-    /** Bumped whenever the library becomes readable / is rescanned, so screens reload. */
     val libraryEpoch = MutableStateFlow(0)
 
-    /** True once the full player has been auto-opened this process launch. */
     var openedPlayerThisLaunch = false
 
-    /** Process-lifetime scope for the MediaStore watch below; main-thread, so it shares the
-     *  confinement every other [refreshLibrary] caller already has. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    /** The pending debounced refresh, and when the burst that owns it began. */
     private var refreshJob: Job? = null
     private var burstStartedAt = 0L
 
@@ -153,10 +142,8 @@ class TimbraApp : Application() {
     }
 
     private companion object {
-        /** Quiet period that ends a burst of MediaStore notifications. */
         const val SETTLE_MS = 1_200L
 
-        /** Longest a refresh is held back once signals have started arriving. */
         const val MAX_WAIT_MS = 5_000L
     }
 }

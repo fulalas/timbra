@@ -27,11 +27,9 @@ object Format {
         }
     }
 
-    /** "artist  •  album", dropping blank parts. */
     fun subtitle(artist: String, album: String): String =
         listOf(artist, album).filter { it.isNotBlank() }.joinToString("  •  ")
 
-    /** "44.1KHz  320Kbps  mp3" (Poweramp-style), dropping unknown parts. */
     fun audioInfo(sampleRateHz: Int, bitrateBps: Int, filePath: String): String {
         val parts = ArrayList<String>(3)
         if (sampleRateHz > 0) {

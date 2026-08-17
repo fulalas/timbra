@@ -28,19 +28,6 @@ import kotlinx.coroutines.sync.withLock
  */
 object FolderAdvance {
 
-    /**
-     * Step to the neighbouring song-folder and load its tracks, entering at [startAt].
-     *
-     * Serialized by [PlaybackSession.folderNavLock] and abandoned when the queue was already
-     * replaced since [expectedGen] was captured — the racing navigation that got there first
-     * stands. Preserves play/pause: a queue that ended on its own keeps playing (playWhenReady
-     * is still set), a manual Next or swipe from a paused song stays paused.
-     *
-     * [stillWanted] is re-checked after the (async) traversal lookup, so a caller can abandon the
-     * move when the thing it was reacting to no longer holds (the player moved on by itself).
-     *
-     * Returns the folder moved to, or null on a no-op (library edge, nothing playing, superseded).
-     */
     suspend fun move(
         context: Context,
         player: Player,
@@ -91,7 +78,6 @@ object FolderAdvance {
         }
     }
 
-    /** True when the persisted repeat mode is Advance-List, i.e. folder stepping is armed. */
     fun armed(context: Context): Boolean =
         context.app.playbackStore.loadModes().second == RepeatMode.ADVANCE
 }

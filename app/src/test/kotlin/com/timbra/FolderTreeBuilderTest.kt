@@ -8,7 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
-/** The virtual folder tree and the traversal Advance-List steps through. */
 class FolderTreeBuilderTest {
 
     private val music = "/storage/emulated/0/Music"
@@ -58,7 +57,6 @@ class FolderTreeBuilderTest {
 
     @Test fun `songFolders lists only folders that directly hold tracks, depth first`() {
         val folders = FolderTreeBuilder.songFolders(library())
-        // "Music" itself holds no loose files, so it is not an entry.
         assertEquals(listOf("Jazz", "Live", "Rock"), folders.map { it.name })
     }
 

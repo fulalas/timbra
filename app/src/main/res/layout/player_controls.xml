@@ -1,13 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The player's control column: song info, seek row, transport row, audio-info line.
-
-     Included by BOTH orientations (see layout/fragment_player.xml and
-     layout-land/fragment_player.xml), so every view id PlayerFragment binds is declared exactly
-     once — adding or renaming a control can no longer compile against one orientation and then
-     silently do nothing after a rotation. Everything that differs between the two is a dimen with
-     a values-land override: the pane padding and the transport button sizes. The include tag
-     supplies the pane's layout params (full width beneath the deck in portrait, the weighted
-     right half in landscape). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -18,7 +9,6 @@
     android:paddingTop="@dimen/pa_player_pad_top"
     android:paddingBottom="@dimen/pa_player_pad_bottom">
 
-    <!-- Tapping the song info jumps to the track's folder. -->
     <LinearLayout
         android:id="@+id/info"
         android:layout_width="match_parent"
@@ -97,7 +87,6 @@
         android:gravity="center_vertical"
         android:layout_marginTop="8dp">
 
-        <!-- Repeat pinned to the far left. -->
         <ImageButton
             android:id="@+id/repeat"
             android:layout_width="@dimen/pa_transport_mode"
@@ -149,7 +138,6 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <!-- Shuffle pinned to the far right. -->
         <ImageButton
             android:id="@+id/shuffle"
             android:layout_width="@dimen/pa_transport_mode"
@@ -161,7 +149,6 @@
             android:contentDescription="@string/cd_shuffle" />
     </LinearLayout>
 
-    <!-- Decoded audio format (sample rate / bitrate / container), Poweramp-style. -->
     <TextView
         android:id="@+id/audio_info"
         android:layout_width="match_parent"

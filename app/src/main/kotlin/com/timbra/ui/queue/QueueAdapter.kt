@@ -21,13 +21,11 @@ class QueueAdapter(
     private val owner: LifecycleOwner,
     private val onClick: (QueueItem) -> Unit,
     private val onLong: (QueueItem) -> Unit,
-    /** Called when the drag handle is touched, to start a reorder drag. */
     private val onDragStart: (RecyclerView.ViewHolder) -> Unit,
 ) : RecyclerView.Adapter<QueueAdapter.VH>() {
 
     private var items: List<QueueItem> = emptyList()
 
-    /** Timeline index of the currently-playing item (for highlighting). */
     var currentIndex: Int = -1
         set(value) {
             if (field == value) return
@@ -67,7 +65,6 @@ class QueueAdapter(
 
     fun currentItems(): List<QueueItem> = items
 
-    /** Visually move a row during a drag (does not touch the player). */
     fun moveItem(from: Int, to: Int) {
         if (from !in items.indices || to !in items.indices) return
         val list = items.toMutableList()
@@ -92,7 +89,6 @@ class QueueAdapter(
         val played = item.played && !playing
         holder.b.title.text = item.displayTitle
         holder.b.subtitle.text = Format.subtitle(item.artist, item.album)
-        // Already-played queue items stay in the list but dimmed.
         holder.b.root.alpha = if (played) 0.4f else 1f
         applyNowPlaying(holder.b.root, holder.b.title, playing)
         // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not

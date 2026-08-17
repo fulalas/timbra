@@ -5,7 +5,6 @@ import com.timbra.R
 import com.timbra.data.model.FolderNode
 import com.timbra.data.model.Track
 
-/** How a track list is ordered. */
 enum class SortOrder(val labelRes: Int) {
     FILENAME(R.string.sort_filename),
     TITLE(R.string.sort_title),
@@ -16,22 +15,18 @@ enum class SortOrder(val labelRes: Int) {
     DURATION(R.string.sort_duration),
 }
 
-/** How folder contents are presented. */
 enum class ViewAs(val labelRes: Int) {
     HIERARCHY(R.string.view_as_hierarchy),
     FLAT(R.string.view_as_flat),
 }
 
 object SortDefaults {
-    /** Folder Songs default to "by filename" and folders default to a hierarchy view. */
     val FOLDER_SONGS: SortOrder = SortOrder.FILENAME
     val FOLDER_VIEW: ViewAs = ViewAs.HIERARCHY
     val LIBRARY_SONGS: SortOrder = SortOrder.TITLE
     val ALBUM_TRACKS: SortOrder = SortOrder.TRACK_NO
 }
 
-/** The ordering used by [sortedBy]; exposed so callers that only need the first/last track
- *  can use minWith/maxWith instead of sorting the whole list. */
 fun comparatorFor(order: SortOrder): Comparator<Track> {
     val primary: Comparator<Track> = when (order) {
         SortOrder.FILENAME -> compareBy(NATURAL) { it.fileName }

@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Portrait: deck on top, controls beneath. The control column itself lives in
-     layout/player_controls.xml, shared with the landscape layout. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -15,14 +13,12 @@
         android:layout_weight="1"
         android:clipChildren="true">
 
-        <!-- Fills the window; fitCenter then centers the art within it. -->
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/art_pager"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
     </FrameLayout>
 
-    <!-- Controls sit straight on the pure-black window (no deck_bg panel). -->
     <include
         android:id="@+id/controls"
         layout="@layout/player_controls"

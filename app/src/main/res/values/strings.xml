@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- app_name is generated from the `appName` property (see gradle.properties / build.gradle.kts)
-         so the app's name lives in exactly one place. -->
 
-    <!-- Library categories -->
     <string name="cat_folders">Folders</string>
     <string name="cat_albums">Albums</string>
     <string name="cat_artists">Artists</string>
@@ -12,13 +9,11 @@
     <string name="cat_playlists">Playlists</string>
     <string name="library">Library</string>
 
-    <!-- Menu -->
     <string name="menu_sort">Sort</string>
     <string name="menu_view_as">View As</string>
     <string name="view_as_flat">Flat</string>
     <string name="view_as_hierarchy">Hierarchy</string>
 
-    <!-- Sort orders -->
     <string name="sort_filename">By filename</string>
     <string name="sort_title">By title</string>
     <string name="sort_track">By track #</string>
@@ -27,14 +22,12 @@
     <string name="sort_date">By date</string>
     <string name="sort_duration">By duration</string>
 
-    <!-- Player -->
     <string name="cd_play">Play</string>
     <string name="cd_next">Next</string>
     <string name="cd_prev">Previous</string>
     <string name="cd_shuffle">Shuffle</string>
     <string name="cd_repeat">Repeat</string>
 
-    <!-- Repeat mode labels -->
     <string name="repeat_off">Repeat Off</string>
     <string name="repeat_list">Repeat List</string>
     <string name="repeat_list_sub">Jump to the first song in a list</string>
@@ -42,13 +35,11 @@
     <string name="repeat_advance_sub">Jump to next list (continues playing the next folder)</string>
     <string name="repeat_song">Repeat Song</string>
 
-    <!-- Shuffle mode labels -->
     <string name="shuffle_off">Shuffle Off</string>
     <string name="shuffle_songs">Shuffle Songs</string>
     <string name="shuffle_songs_sub">Current list</string>
     <string name="shuffle_all">Shuffle All Songs</string>
 
-    <!-- Context menu -->
     <string name="menu_enqueue">Enqueue</string>
     <string name="menu_delete">Delete</string>
     <string name="menu_remove">Remove from queue</string>
@@ -67,7 +58,6 @@
     <string name="menu_clear_queue">Clear Queue</string>
     <string name="clear_queue_confirm">Clear the entire queue?</string>
 
-    <!-- Info / Tags dialog -->
     <string name="info_none">—</string>
     <string name="info_title">Title: %1$s</string>
     <string name="info_artist">Artist: %1$s</string>
@@ -77,19 +67,16 @@
     <string name="info_duration">Duration: %1$s</string>
     <string name="info_path">Path: %1$s</string>
 
-    <!-- Permission -->
     <string name="perm_needed_title">Permission needed</string>
     <string name="perm_needed_body">Timbra needs access to your audio files to show your library. Grant the permission in Settings and reopen the app.</string>
     <string name="perm_open_settings">Open settings</string>
 
-    <!-- Equalizer -->
     <string name="menu_equalizer">Equalizer</string>
     <string name="eq_on">On</string>
     <string name="eq_off">Off</string>
     <string name="eq_reset">Reset</string>
     <string name="eq_reset_confirm">Reset all equalizer bands to 0 dB?</string>
 
-    <!-- Search -->
     <string name="menu_search">Search</string>
     <string name="menu_rescan">Rescan</string>
     <plurals name="rescan_done">
@@ -103,12 +90,10 @@
     <string name="search_play_all_results">All results</string>
     <string name="search_play_folder">Its folder</string>
 
-    <!-- About -->
     <string name="menu_about">About</string>
     <string name="about_body">Version %1$s (build %2$d)\nPackage: %3$s\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\n• Audio engine: Media3 / ExoPlayer with FFmpeg decoders (wide format support, all ABIs incl. arm64)\n• Folder-hierarchy browsing, full library, gapless playback, background playback\n\nBuilt with Kotlin.\n\nFree software under the GNU General Public License v3.0 or later. Bundled libraries keep their own licenses (Apache-2.0; FFmpeg under LGPL/GPL).</string>
     <string name="cd_album_art">Album art</string>
 
-    <!-- Misc -->
     <string name="unknown_artist">Unknown artist</string>
     <string name="unknown_album">Unknown album</string>
     <string name="nothing_playing">Nothing playing</string>

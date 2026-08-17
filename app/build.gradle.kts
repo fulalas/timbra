@@ -4,13 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// App display name — single source of truth lives in gradle.properties (`appName`).
 val appName = providers.gradleProperty("appName").get().trim()
 require(appName.isNotEmpty()) { "appName in gradle.properties must not be blank" }
 
-// The same value is consumed by three different languages — this generated XML resource, the APK
-// filename in build.sh, and a SQL literal in install.sh — so validate the one property rather than
-// escaping it three ways. Keeps it to characters that are safe everywhere.
 require(appName.matches(Regex("[A-Za-z0-9][A-Za-z0-9 ._-]*"))) {
     "appName must be letters, digits, spaces, dots, underscores or hyphens (was: \"$appName\")"
 }
@@ -25,10 +21,9 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library → overflow → About) and in the output APK filename.
-        versionCode = 124
-        versionName = "0.9.2"
+        versionCode = 125
+        versionName = "0.9.3"
 
-        // Generate R.string.app_name from `appName` so the name isn't duplicated in strings.xml.
         resValue("string", "app_name", appName)
 
         // Explicit, so an unsupported ABI fails at INSTALL time. The jniLibs excludes below strip
@@ -51,7 +46,6 @@ android {
 
     buildTypes {
         release {
-            // Strip unused code + resources (e.g. the many unused matte_* assets).
             isMinifyEnabled = true
             isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
@@ -96,8 +90,6 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    // Only to obtain an android.net.Uri instance: Track carries one, and the framework stub in the
-    // unit-test classpath cannot produce a real Uri. Nothing here mocks app behaviour.
     testImplementation("org.mockito:mockito-core:5.14.2")
 
     val media3 = "1.5.1"
@@ -105,7 +97,6 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-common:$media3")
 
-    // FFmpeg-backed decoders for Media3 (wide format support, all ABIs incl. arm64).
     implementation("com.github.anilbeesetti.nextlib:nextlib-media3ext:0.8.4")
 
     implementation("androidx.navigation:navigation-fragment-ktx:2.8.5")

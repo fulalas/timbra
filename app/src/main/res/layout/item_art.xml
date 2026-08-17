@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One album-art deck page. No generic placeholder: when a song has no cover art the
-     glowing app mark is shown instead (Poweramp-style), toggled by ArtPagerAdapter. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent">

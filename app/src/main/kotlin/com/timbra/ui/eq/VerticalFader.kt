@@ -7,11 +7,6 @@ import android.view.MotionEvent
 import android.widget.FrameLayout
 import kotlin.math.roundToInt
 
-/**
- * Column container for one equalizer band. Holds the (rotated) fader SeekBar for visuals but
- * grabs all touches itself, so the user can drag anywhere in the whole column — not just on the
- * thin thumb — to change the band. Touch Y is mapped to [0, max] (top = max).
- */
 class VerticalFader @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -20,7 +15,6 @@ class VerticalFader @JvmOverloads constructor(
     var max = 100
     var onValue: ((Int) -> Unit)? = null
 
-    /** Fires when the finger lifts (or the gesture is cancelled) — the moment to persist. */
     var onRelease: (() -> Unit)? = null
 
     // Steal touches from the child SeekBar so the entire column is the hit target.

@@ -39,10 +39,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Folder browser. Defaults (per the product spec): folders shown as a HIERARCHY and
- * the songs inside a folder sorted BY FILENAME.
- */
 class FolderTreeFragment : Fragment(), MenuProvider {
 
     private var _b: FragmentListBinding? = null
@@ -155,12 +151,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
         }
     }
 
-    /**
-     * Scroll so the currently-playing track sits in the middle of the viewport. A no-op when
-     * the track isn't in this list, or when the whole list already fits on screen (nothing to
-     * scroll). Two-step: bring the row into view first, then measure its real height so the
-     * centering offset is exact regardless of row type.
-     */
     private fun centerPlaying(items: List<ListItem>) {
         val playingId = player.state.value.mediaId
         val pos = items.indexOfFirst { it is ListItem.TrackRow && it.track.id == playingId }
@@ -209,8 +199,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             bundleOf("folderPath" to node.path, "folderTitle" to node.name),
         )
     }
-
-    // --- Menu (View As + Sort) ---
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
         inflater.inflate(R.menu.menu_list, menu)

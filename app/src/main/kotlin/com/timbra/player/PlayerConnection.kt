@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.random.Random
 
-/** Snapshot of playback state observed by the UI. */
 data class UiPlayback(
     val hasItem: Boolean = false,
     val mediaId: Long = -1L,
@@ -34,7 +33,6 @@ data class UiPlayback(
     val queueIndex: Int = -1,
     val shuffle: ShuffleMode = ShuffleMode.OFF,
     val repeat: RepeatMode = RepeatMode.OFF,
-    /** Decoded audio format (from the service via session extras); 0/-1 when unknown. */
     val sampleRateHz: Int = 0,
     val bitrateBps: Int = 0,
     /**
@@ -45,13 +43,9 @@ data class UiPlayback(
      */
     val liveTransitionSeq: Int = 0,
 ) {
-    /** Title, falling back to the file name when tags are missing — the ONE fallback both the
-     *  mini-player and the full player use (they had hand-written, already-divergent copies, so
-     *  a blank-titled song read "Nothing playing" on one and "Timbra" on the other). */
     val displayTitle: String get() = title.ifBlank { filePath.substringAfterLast('/') }
 }
 
-/** One entry in the play timeline, used to page album art and show the Queue list. */
 data class QueueItem(
     val mediaId: Long,
     val albumId: Long,
@@ -60,22 +54,15 @@ data class QueueItem(
     val album: String,
     val filePath: String,
     val timelineIndex: Int,
-    /** True only for songs the user manually enqueued (play-next), vs. the playing list. */
     val enqueued: Boolean,
     /** True once an [enqueued] song has been played, i.e. the block is consumed up to here.
      *  Carried on the item itself rather than inferred from the timeline index, which says
      *  nothing about progress under shuffle (see [KEY_ENQ_PLAYED]). */
     val played: Boolean = false,
 ) {
-    /** Title, falling back to the file name when tags are missing (mirrors [Track.displayTitle]). */
     val displayTitle: String get() = title.ifBlank { filePath.substringAfterLast('/') }
 }
 
-/**
- * UI-side wrapper around a [MediaController] bound to [PlaybackService]. Exposes an
- * observable [state] + [queue] and transport controls. Shuffle/repeat are tracked as
- * app-level modes (broader than ExoPlayer's flags).
- */
 class PlayerConnection(private val context: Context) {
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -107,7 +94,6 @@ class PlayerConnection(private val context: Context) {
     private data class PreShuffle(val ids: List<Long>, val currentId: Long?, val positionMs: Long)
     private var preShuffle: PreShuffle? = null
 
-    /** Index of the last "play next" enqueued item, so further enqueues append FIFO. */
     private var enqueueEnd = -1
 
     /**
@@ -144,7 +130,6 @@ class PlayerConnection(private val context: Context) {
         return h
     }
 
-    /** Bumped on each genuine live song transition (see [UiPlayback.liveTransitionSeq]). */
     private var liveTransitionSeq = 0
 
     private val listener = object : Player.Listener {
@@ -200,7 +185,6 @@ class PlayerConnection(private val context: Context) {
         }
     }
 
-    /** Decoded audio format published by the service (see [PlaybackService] extras). */
     private var sampleRateHz = 0
     private var bitrateBps = 0
 
@@ -282,7 +266,6 @@ class PlayerConnection(private val context: Context) {
 
     fun release() {
         savePosition()
-        // Abandons any pending connect retry (see [connectEpoch]).
         connectEpoch++
         handler.removeCallbacks(ticker)
         controller?.removeListener(listener)
@@ -291,13 +274,10 @@ class PlayerConnection(private val context: Context) {
         controllerFuture = null
     }
 
-    // --- Persist / restore ---
-
     fun isQueueEmpty(): Boolean = (controller?.mediaItemCount ?: 0) == 0
 
     fun loadSavedState(): PlaybackStateStore.Saved? = store.load()
 
-    /** Persist the queue snapshot [rebuildQueue] just produced (no extra timeline walk). */
     private fun saveQueue() {
         val c = controller ?: return
         val items = _queue.value
@@ -323,13 +303,6 @@ class PlayerConnection(private val context: Context) {
         controller?.let { store.checkpoint(it) }
     }
 
-    /**
-     * Adopt persisted [shuffle]/[repeat] play modes into the in-memory fields and
-     * mirror them onto the player. [forceShuffleOrder] = true (cold [restore], fresh queue)
-     * always writes shuffleModeEnabled so the new timeline gets a shuffle order; false (live
-     * reconnect) writes it only when it actually drifted, so an already-shuffled session isn't
-     * needlessly reshuffled (see PlaybackService.onShuffleModeEnabledChanged / onTimelineChanged).
-     */
     private fun applyModes(shuffle: ShuffleMode, repeat: RepeatMode, forceShuffleOrder: Boolean) {
         val c = controller ?: return
         appShuffle = shuffle
@@ -341,10 +314,6 @@ class PlayerConnection(private val context: Context) {
         }
     }
 
-    /**
-     * Restore a saved queue paused at [positionMs]; the user presses play to resume.
-     * [enqueuedFlags] is aligned with [tracks] and marks which items were in the queue.
-     */
     fun restore(
         tracks: List<Track>,
         enqueuedFlags: List<Boolean>,
@@ -428,7 +397,6 @@ class PlayerConnection(private val context: Context) {
         if (appShuffle == ShuffleMode.OFF) preShuffle = null else takeShuffleSnapshot()
     }
 
-    /** Remove every manually-enqueued item from the timeline (Clear Queue). */
     fun clearQueue() {
         val c = controller ?: return
         val cur = c.currentMediaItemIndex
@@ -447,16 +415,6 @@ class PlayerConnection(private val context: Context) {
         enqueueEnd = -1
     }
 
-    // --- Transport ---
-
-    /**
-     * Replace the queue with [tracks] starting at [startIndex]. [play] = true starts playback
-     * (tapping a song); false leaves the play/pause state untouched — so a folder advance keeps
-     * playing if it was playing (playWhenReady survives setMediaItems) and stays paused if paused.
-     * [folderContext] anchors folder navigation on the folder this queue came from. Returns false
-     * when there is no controller to command (released mid-flight, e.g. the app was
-     * backgrounded) — the queue is then untouched.
-     */
     fun play(
         tracks: List<Track>,
         startIndex: Int,
@@ -479,7 +437,6 @@ class PlayerConnection(private val context: Context) {
         return true
     }
 
-    /** Insert [tracks] to play right after the current one (FIFO across repeated enqueues). */
     fun enqueueNext(tracks: List<Track>) {
         val c = controller ?: return
         if (tracks.isEmpty()) return
@@ -516,12 +473,6 @@ class PlayerConnection(private val context: Context) {
         if (c.isPlaying) c.pause() else c.play()
     }
 
-    /**
-     * Step to a neighbouring song-folder through the shared [FolderAdvance], on this connection's
-     * controller. Only the deck's own gestures come through here — they need to know whether
-     * anything actually moved; every other trigger is handled service-side by the same code.
-     * Returns the folder moved to, or null on a no-op.
-     */
     suspend fun moveFolder(
         context: Context,
         forward: Boolean,
@@ -575,29 +526,17 @@ class PlayerConnection(private val context: Context) {
         )
     }
 
-    // --- Shuffle-aware navigation state (used by the album-art deck) ---
-
     fun hasNext(): Boolean = controller?.hasNextMediaItem() == true
 
-    /** Timeline index of the song that Next / Previous would play (shuffle-order aware);
-     *  -1 when there is none. */
     fun nextQueueIndex(): Int = controller?.nextMediaItemIndex ?: -1
     fun prevQueueIndex(): Int = controller?.previousMediaItemIndex ?: -1
 
-    /** Strict back-navigation for the deck swipe: always moves to the previous song in the
-     *  play order (never restarts the current one), preserving play/pause. No-op at the start. */
     fun previousSong() {
         val c = controller ?: return
         if (c.hasPreviousMediaItem()) c.seekToPreviousMediaItem()
     }
     fun seekTo(ms: Long) { controller?.seekTo(ms) }
 
-    /**
-     * Jump to a specific queue position. [play] = true starts playback (tapping a queue row);
-     * false only seeks, preserving the current play/pause state (swiping the album-art pager).
-     * [expectedMediaId] guards a stale [index] the same way [removeQueueItem] does — the Queue
-     * screen's rows carry the index they were bound with, which lags a reorder.
-     */
     fun seekToQueueItem(index: Int, expectedMediaId: Long? = null, play: Boolean = true) {
         val c = controller ?: return
         val target = if (expectedMediaId == null) index else resolveIndex(c, index, expectedMediaId)
@@ -630,16 +569,6 @@ class PlayerConnection(private val context: Context) {
         if (target <= enqueueEnd) enqueueEnd--
     }
 
-    /**
-     * Reorder the pending play-next items to match [orderedMediaIds] (their desired order).
-     *
-     * Only the enqueued slots AFTER the current one are touched. The block is not necessarily
-     * contiguous — it is retired while older entries keep their flag — and assuming it was let a
-     * move cross the currently-playing song, which stranded the whole reordered block BEHIND it
-     * where it never played. Each item is brought to the next enqueued slot recomputed from the
-     * live timeline, so every move runs downward within the pending region and can never cross
-     * the current index.
-     */
     fun reorderQueue(orderedMediaIds: List<Long>) {
         val c = controller ?: return
         if (orderedMediaIds.isEmpty()) return
@@ -659,16 +588,12 @@ class PlayerConnection(private val context: Context) {
         }
     }
 
-    // --- Modes ---
-
     fun setShuffle(mode: ShuffleMode) {
         val c = controller ?: return
         // Snapshot the queue the first time shuffle is turned on from OFF, so it can be
         // restored when shuffle later returns to OFF (see [disableShuffleRestoring]).
         if (appShuffle == ShuffleMode.OFF && mode != ShuffleMode.OFF) takeShuffleSnapshot()
         appShuffle = mode
-        // Toggles ExoPlayer's shuffle over the current queue; enabling regenerates a fresh
-        // random order (see PlaybackService).
         c.shuffleModeEnabled = mode.playerShuffleEnabled
         saveModes()
         pushState()
@@ -735,19 +660,13 @@ class PlayerConnection(private val context: Context) {
         val cur = c.currentMediaItemIndex
         if (cur + 1 < c.mediaItemCount) c.removeMediaItems(cur + 1, c.mediaItemCount)
         if (cur > 0) c.removeMediaItems(0, cur)
-        // Only the current item remains (index 0). Wrap the rest of [tracks] around it.
         val before = tracks.subList(0, pos).map { it.toMediaItem(context) }
         val after = tracks.subList(pos + 1, tracks.size).map { it.toMediaItem(context) }
         if (before.isNotEmpty()) c.addMediaItems(0, before)
         if (after.isNotEmpty()) c.addMediaItems(c.mediaItemCount, after)
-        // The current song sits at `pos` again now that `before` is back in front of it.
         spliceEnqueued(c, carried, pos + 1)
     }
 
-    /**
-     * Re-insert a carried-over play-next block at [at], keeping it the enqueued block. The items
-     * are the original [MediaItem]s, so they keep their metadata and enqueued flag.
-     */
     private fun spliceEnqueued(c: MediaController, items: List<MediaItem>, at: Int) {
         if (items.isEmpty()) { enqueueEnd = -1; return }
         val start = at.coerceIn(0, c.mediaItemCount)
@@ -755,15 +674,8 @@ class PlayerConnection(private val context: Context) {
         enqueueEnd = start + items.size - 1
     }
 
-    /** Track ids captured when shuffle was enabled, so the UI can re-resolve them to [Track]s. */
     fun preShuffleQueueIds(): List<Long> = preShuffle?.ids ?: emptyList()
 
-    /**
-     * Turn shuffle OFF and restore the pre-shuffle queue from [tracks] (the UI resolves the
-     * ids from [preShuffleQueueIds] against the library). If the current song is still in that
-     * queue, rebuild around it so audio isn't interrupted; otherwise fall back to the snapshot's
-     * saved spot.
-     */
     fun disableShuffleRestoring(tracks: List<Track>) {
         val c = controller ?: return
         val snap = preShuffle
@@ -778,7 +690,6 @@ class PlayerConnection(private val context: Context) {
         val curId = c.currentMediaItem?.trackId
         val pos = tracks.indexOfFirst { it.id == curId }
         if (pos >= 0) {
-            // Seamless: keep the current song, rebuild the original queue around it.
             rebuildAroundCurrent(c, tracks, pos, carried)
         } else {
             // Current song isn't in the original queue (played into shuffle) — restore as saved.
@@ -791,13 +702,6 @@ class PlayerConnection(private val context: Context) {
         pushState()
     }
 
-    /**
-     * Shuffle-All (the third shuffle mode): make every song the pool. The currently playing
-     * song is NOT interrupted — it keeps playing while the queue becomes the whole library; if
-     * nothing is playing, start from a random track. Shuffle is enabled last, once the timeline
-     * is final, so the fresh random order (see PlaybackService) covers all songs. The pre-shuffle
-     * snapshot (taken when shuffle first turned on) is left intact so OFF can restore it.
-     */
     fun playAllShuffled(tracks: List<Track>) {
         val c = controller ?: return
         if (tracks.isEmpty()) return
@@ -838,11 +742,6 @@ class PlayerConnection(private val context: Context) {
         pushState()
     }
 
-    /**
-     * Push equalizer state to the service-side effect (see [PlaybackService.CMD_APPLY_EQ]) for
-     * live feedback. The equalizer screen persists to [EqSettings] separately; this is the
-     * real-time channel. No-op if the controller isn't connected yet.
-     */
     fun applyEq(enabled: Boolean, gainsDb: IntArray) {
         val c = controller ?: return
         val args = android.os.Bundle().apply {
@@ -917,7 +816,6 @@ class PlayerConnection(private val context: Context) {
     }
 
     private companion object {
-        /** Bounded retry when the session can't be bound (see [buildController]). */
         const val MAX_CONNECT_ATTEMPTS = 3
         const val CONNECT_RETRY_MS = 400L
     }

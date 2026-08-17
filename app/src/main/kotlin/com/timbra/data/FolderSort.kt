@@ -4,21 +4,6 @@ package com.timbra.data
 import android.content.Context
 import com.timbra.player.enumByName
 
-/**
- * The folder browser's View-As and Sort choice, persisted and app-wide.
- *
- * Deliberately NOT a per-Fragment field: the sort decides the order a folder's QUEUE is built
- * in, so a view-scoped copy meant the folder you tapped played in the chosen order while the
- * folder an Advance-List step rolled into was built in the default one — walking one folder
- * forward and back did not return you to where you were. (It also silently reverted on rotation
- * and on every trip through the back stack.) One setting, read by the browse list and by every
- * queue-building path, makes browse order and play order the same thing by construction.
- *
- * Stored by NAME, not ordinal: an ordinal is positional, so inserting or reordering a [SortOrder]
- * entry would silently reinterpret the saved choice as a different sort — and the fallback below
- * cannot detect it, because the stale ordinal is still in range. The legacy ordinal keys are read
- * once when no name is present, so an in-place update keeps the existing choice.
- */
 class FolderSort(context: Context) {
 
     private val prefs =

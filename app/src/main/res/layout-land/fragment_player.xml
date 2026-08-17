@@ -1,10 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Landscape: two-pane split. Art fills the left half; info/seek/controls
-     stack in the right half so the transport doesn't spread edge-to-edge.
-     The control column itself is layout/player_controls.xml, shared with portrait — so every
-     view id PlayerFragment binds is declared ONCE, and adding a control can't compile against
-     one orientation and then silently do nothing after a rotation. Only the pane geometry
-     differs here (plus the smaller transport buttons, from values-land/dimens.xml). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -19,14 +13,12 @@
         android:layout_weight="1"
         android:clipChildren="true">
 
-        <!-- Album art, fitCenter within the left half. -->
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/art_pager"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
     </FrameLayout>
 
-    <!-- Right pane: controls, vertically centered on the pure-black window. -->
     <include
         android:id="@+id/controls"
         layout="@layout/player_controls"

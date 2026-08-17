@@ -14,21 +14,6 @@ import kotlin.math.pow
 import kotlin.math.round
 import kotlin.math.sin
 
-/**
- * A 7-band graphic equalizer implemented as a Media3 [AudioProcessor] — pure DSP in ExoPlayer's
- * audio pipeline, so it works on every device regardless of the platform AudioEffect support
- * (the framework [android.media.audiofx.DynamicsProcessing]/Equalizer effects fail to init on
- * some HALs). Each band is a biquad peaking filter (RBJ cookbook) cascaded per channel.
- *
- * Only 16-bit PCM is handled; other encodings pass through untouched (the processor reports
- * itself inactive).
- *
- * Threading: the whole tunable state is one immutable [Tuning] published in a single volatile
- * store (see [tuning]), and every rebuild happens under [buildLock] — the UI thread (via
- * [update]) and the playback thread (via [onConfigure]) both rebuild, and two independent
- * volatile fields could otherwise be read as a mismatched pair or published out of order.
- * Per-sample filter state is touched only on the audio thread.
- */
 @UnstableApi
 class EqualizerAudioProcessor : BaseAudioProcessor() {
 
@@ -43,7 +28,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
      */
     private class Tuning(
         val enabled: Boolean,
-        /** Per-band normalized coeffs [b0, b1, b2, a1, a2]. */
         val coeffs: Array<DoubleArray>,
         /**
          * Indices of the bands whose coeffs are NOT the identity, i.e. the only ones worth
@@ -77,11 +61,9 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
 
     // --- Audio thread only ---
     private var channels = 0
-    /** Per-channel, per-band filter memory: [channel][band*4 + (x1,x2,y1,y2)]. */
     private var state: Array<DoubleArray> = emptyArray()
     private var appliedGeneration = 0
 
-    /** Called from the session callback (application thread) on every equalizer change. */
     fun update(enabled: Boolean, gainsDb: IntArray) = synchronized(buildLock) {
         enabledInput = enabled
         gainsInput = gainsDb.copyOf(EqSettings.BAND_COUNT)
@@ -157,9 +139,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
 
     private fun clearState() = state.forEach { it.fill(0.0) }
 
-    /** Build the coeffs and publish them with [enabledInput] as one snapshot. Call under
-     *  [buildLock]: a rebuild that read a stale [sampleRate] could otherwise land AFTER the
-     *  one triggered by a format change and leave the wrong band centres in effect. */
     private fun publish() {
         val co = buildCoeffs(gainsInput, sampleRate)
         // Derived from the SAME condition buildCoeffs uses to emit an identity biquad, instead of
@@ -176,7 +155,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     private companion object {
-        /** Q for each peaking band — moderate width, smooth overlap across the 7 bands. */
         const val Q = 1.0
 
         /**

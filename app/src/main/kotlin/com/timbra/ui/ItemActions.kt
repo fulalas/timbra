@@ -12,10 +12,6 @@ import com.timbra.data.model.Track
 import com.timbra.player.QueueItem
 import com.timbra.ui.dialogs.Dialogs
 
-/**
- * Long-press context menu for a track or folder: Enqueue (play next, FIFO),
- * Info / Tags, Share, and Delete (removes the file from storage).
- */
 object ItemActions {
 
     fun show(fragment: Fragment, label: String, tracks: List<Track>) {
@@ -37,7 +33,6 @@ object ItemActions {
         }
     }
 
-    /** Queue-screen context menu: Info / Share / Remove (removes from queue, not from disk). */
     fun showForQueue(fragment: Fragment, item: QueueItem, onRemove: () -> Unit) {
         val ctx = fragment.requireContext()
         val options = arrayOf(
@@ -57,7 +52,6 @@ object ItemActions {
         }
     }
 
-    /** The Info dialog body; track-only lines (number, duration) are included when known. */
     private fun infoBody(
         ctx: Context,
         title: String,
@@ -68,9 +62,6 @@ object ItemActions {
         discNo: Int = 0,
         durationMs: Long = 0,
     ): String = buildString {
-        // Through resources, like the rest of this file: these labels are the dialog the user reads
-        // most, and hardcoding them put the one screen localisation cannot reach in the middle of a
-        // file that otherwise uses R.string for everything.
         val none = ctx.getString(R.string.info_none)
         appendLine(ctx.getString(R.string.info_title, title))
         appendLine(ctx.getString(R.string.info_artist, artist.ifBlank { none }))

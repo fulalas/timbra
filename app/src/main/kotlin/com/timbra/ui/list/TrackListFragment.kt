@@ -34,10 +34,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * A browse list that renders either an index of albums/artists/genres/playlists
- * (navigable rows) or a flat list of playable tracks, depending on [listKind].
- */
 class TrackListFragment : Fragment(), MenuProvider {
 
     private var _b: FragmentListBinding? = null
@@ -140,16 +136,11 @@ class TrackListFragment : Fragment(), MenuProvider {
         }
     }
 
-    /** Rows plus the track list a row tap plays from (empty for index screens). */
     private class Built(val items: List<ListItem>, val playable: List<Track>)
 
     private fun trackRows(sorted: List<Track>): Built =
         Built(sorted.mapIndexed { i, t -> ListItem.TrackRow(t, i) }, sorted)
 
-    /**
-     * Index rows for albums/artists/genres/playlists — one shape, four callers, so the id and
-     * kind arguments can't be transposed and the label can't be passed twice by accident.
-     */
     private fun <T> navRows(
         res: android.content.res.Resources,
         entries: List<T>,
@@ -173,8 +164,6 @@ class TrackListFragment : Fragment(), MenuProvider {
             bundleOf("listKind" to nav.kind, "listId" to nav.id, "listTitle" to nav.navTitle),
         )
     }
-
-    // --- Menu (Sort) ---
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
         inflater.inflate(R.menu.menu_list, menu)

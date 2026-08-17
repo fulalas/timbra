@@ -1,8 +1,4 @@
 #!/bin/bash
-# Install the latest built Timbra APK on the connected device. Default is an in-place
-# UPDATE (adb install -r): app data and the pinned home-screen shortcut survive.
-# Pass --clean to force a fresh install (uninstall + install), which also restores the
-# home-screen shortcut that the uninstall wipes.
 
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -10,7 +6,6 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 CLEAN=0
 [ "$1" = "--clean" ] && CLEAN=1
 
-# Same toolchain resolution order as build.sh (for adb); falls back to adb on PATH.
 if [ -n "$TIMBRA_ENV" ] && [ -f "$TIMBRA_ENV" ]; then
     source "$TIMBRA_ENV"
 elif [ -f "${TOOLCHAIN_DIR:-$DIR/toolchain}/env.sh" ]; then

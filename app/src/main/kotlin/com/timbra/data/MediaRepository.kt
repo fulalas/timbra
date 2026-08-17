@@ -20,19 +20,11 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Reads the on-device audio library from MediaStore. All tracks are loaded once and
- * cached; albums/artists/folders are derived in memory, genres come from the Genres
- * tables. Refresh with [invalidate].
- */
 class MediaRepository(context: Context) {
 
     private val appContext = context.applicationContext
     private val resolver get() = appContext.contentResolver
 
-    /** The "no tags" labels, resolved once. Index rows must show the SAME text the track rows
-     *  do — building them from the raw (blank) value rendered title-less rows and, once tapped,
-     *  an empty toolbar title. Also the grouping key for [tracksForArtist]. */
     private val unknownArtist by lazy { appContext.getString(R.string.unknown_artist) }
     private val unknownAlbum by lazy { appContext.getString(R.string.unknown_album) }
 
@@ -83,13 +75,9 @@ class MediaRepository(context: Context) {
     private val folderRootCache = Cache<FolderNode>()
     private val songFoldersCache = Cache<List<FolderNode>>()
 
-    /** albumId -> its tracks / display artist -> its tracks. [albums]/[artists] compute exactly
-     *  these groupings to build their index rows, so caching them turns the per-screen
-     *  `allTracks().filter { … }` whole-library walk into one map lookup. */
     private val tracksByAlbumCache = Cache<Map<Long, List<Track>>>()
     private val tracksByArtistCache = Cache<Map<String, List<Track>>>()
 
-    /** genreId -> member track ids, so opening a genre doesn't re-run the Members query. */
     private val genreMembersCache = Cache<ConcurrentHashMap<Long, Set<Long>>>()
 
     private val caches = listOf(
@@ -151,12 +139,8 @@ class MediaRepository(context: Context) {
     suspend fun tracksForAlbum(albumId: Long): List<Track> =
         tracksByAlbum()[albumId] ?: emptyList()
 
-    /** [artistName] is the DISPLAYED name (what [artists] emitted), which is also the grouping
-     *  key — so an untagged artist's rows resolve instead of silently coming back empty. */
     suspend fun tracksForArtist(artistName: String): List<Track> =
         tracksByArtist()[artistName] ?: emptyList()
-
-    // --- Genres (queried from the dedicated tables) ---
 
     suspend fun genres(): List<Genre> = genresCache.get {
         withContext(Dispatchers.IO) {
@@ -215,8 +199,6 @@ class MediaRepository(context: Context) {
         return ids
     }
 
-    // --- Playlists (legacy MediaStore tables) ---
-
     @Suppress("DEPRECATION")
     suspend fun playlists(): List<Playlist> = playlistsCache.get {
         val tracks = allTracks()
@@ -251,7 +233,6 @@ class MediaRepository(context: Context) {
     suspend fun tracksForPlaylist(playlistId: Long): List<Track> {
         val tracks = allTracks()
         return withContext(Dispatchers.IO) {
-            // Map built inside the dispatch (see playlists()).
             val byId = tracks.associateBy { it.id }
             playlistMemberIds(playlistId).mapNotNull { byId[it] }
         }
@@ -270,8 +251,6 @@ class MediaRepository(context: Context) {
         }
         return ids
     }
-
-    // --- Change detection ---
 
     /**
      * A marker of the audio table's current state, compared against the previous value to decide
@@ -318,8 +297,6 @@ class MediaRepository(context: Context) {
         "$count/$newestAdded/$newestModified/$pathFold"
     }
 
-    // --- Core track query ---
-
     private fun queryTracks(): List<Track> {
         val projection = buildList {
             add(MediaStore.Audio.Media._ID)
@@ -352,7 +329,6 @@ class MediaRepository(context: Context) {
         return out
     }
 
-    /** The (loop-invariant) column indices of the [queryTracks] projection. */
     private class TrackColumns(c: Cursor) {
         val id = c.getColumnIndex(MediaStore.Audio.Media._ID)
         val title = c.getColumnIndex(MediaStore.Audio.Media.TITLE)
@@ -407,10 +383,6 @@ class MediaRepository(context: Context) {
 
         fun albumArtUri(albumId: Long): Uri = ContentUris.withAppendedId(ALBUM_ART_BASE, albumId)
 
-        /**
-         * The playable/shareable content Uri of a track by MediaStore id. Art consumers load
-         * through this (not the album-art table alone) so embedded-only covers are found too.
-         */
         fun trackUri(mediaId: Long): Uri =
             ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, mediaId)
     }

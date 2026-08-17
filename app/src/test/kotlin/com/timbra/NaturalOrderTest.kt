@@ -6,10 +6,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The hand-rolled natural comparator. It backs every filename and title ordering in the app and
- * runs on the main thread during folder advances, so its edge cases are worth pinning down.
- */
 class NaturalOrderTest {
 
     private fun cmp(a: String, b: String) = NATURAL.compare(a, b)
@@ -60,7 +56,6 @@ class NaturalOrderTest {
                 assertEquals("antisymmetry for '$a' vs '$b'", ab.compareTo(0), -ba.compareTo(0))
             }
         }
-        // Transitivity, which is what sortedWith actually relies on.
         for (a in names) for (b in names) for (c in names) {
             if (cmp(a, b) <= 0 && cmp(b, c) <= 0) {
                 assertTrue("transitivity for '$a' <= '$b' <= '$c'", cmp(a, c) <= 0)

@@ -4,11 +4,6 @@ package com.timbra.data
 import com.timbra.data.model.FolderNode
 import com.timbra.data.model.Track
 
-/**
- * Builds a virtual folder hierarchy from track file paths (no MANAGE_EXTERNAL_STORAGE
- * needed — paths come from MediaStore). Directories that contain only a single child
- * directory are collapsed so the tree starts at meaningful roots.
- */
 object FolderTreeBuilder {
 
     fun build(tracks: List<Track>): FolderNode {
@@ -31,13 +26,10 @@ object FolderTreeBuilder {
             node.tracks.add(track)
         }
         val collapsed = collapseSingleChildChains(root)
-        // One explicit bottom-up pass now that every node is populated (see
-        // FolderNode.totalTrackCount for why this isn't a `by lazy` on the node).
         computeTotals(collapsed)
         return collapsed
     }
 
-    /** Fill in [FolderNode.totalTrackCount] for [node] and every descendant; returns its total. */
     private fun computeTotals(node: FolderNode): Int {
         var total = node.tracks.size
         for (child in node.subFolders.values) total += computeTotals(child)
@@ -45,7 +37,6 @@ object FolderTreeBuilder {
         return total
     }
 
-    /** Collapse leading chains like /storage/emulated/0/Music -> Music root. */
     private fun collapseSingleChildChains(root: FolderNode): FolderNode {
         var node = root
         while (node.tracks.isEmpty() && node.subFolders.size == 1) {
@@ -54,7 +45,6 @@ object FolderTreeBuilder {
         return node
     }
 
-    /** Locate a node by its absolute [path] within [root] (DFS). */
     fun find(root: FolderNode, path: String): FolderNode? {
         if (path.isBlank() || path == root.path) return root
         val stack = ArrayDeque<FolderNode>()
@@ -67,7 +57,6 @@ object FolderTreeBuilder {
         return null
     }
 
-    /** All tracks in [node] and its descendants (used by the flat view). */
     fun flatten(node: FolderNode): List<Track> {
         val out = ArrayList<Track>()
         out.addAll(node.tracks)
@@ -81,12 +70,6 @@ object FolderTreeBuilder {
     fun sortedChildren(node: FolderNode): List<FolderNode> =
         node.childFolders.sortedWith(compareBy(NATURAL) { it.name })
 
-    /**
-     * The library as one flat, depth-first list of the folders that DIRECTLY contain
-     * songs — THE traversal order for every folder jump/advance. Container folders
-     * (only subfolders, no loose files) are not entries; a folder entry stands for its
-     * own tracks only, its subfolders being entries of their own.
-     */
     fun songFolders(root: FolderNode): List<FolderNode> {
         val out = ArrayList<FolderNode>()
         fun walk(node: FolderNode) {
@@ -97,14 +80,6 @@ object FolderTreeBuilder {
         return out
     }
 
-    /**
-     * The (previous, next) song-folders around the first of [anchorPaths] that resolves to an
-     * entry in the flat traversal [folders]; nulls at the edges or when none resolves. [anchorPaths]
-     * is tried in priority order (e.g. the UI passes its folderContext then the playing file's
-     * directory; the service passes just that directory) — the single source of truth for
-     * Advance-List folder stepping, shared by [com.timbra.ui.MainActivity] and
-     * [com.timbra.player.PlaybackService].
-     */
     fun neighbourFolders(
         folders: List<FolderNode>,
         vararg anchorPaths: String?,

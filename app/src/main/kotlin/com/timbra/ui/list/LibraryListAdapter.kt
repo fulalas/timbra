@@ -18,7 +18,6 @@ import com.timbra.ui.ArtLoader
 import com.timbra.ui.Format
 import com.timbra.ui.applyNowPlaying
 
-/** One entry in a browse list: a folder, a playable track, or a navigable index item. */
 sealed interface ListItem {
     data class FolderRow(val node: FolderNode) : ListItem
     data class TrackRow(val track: Track, val indexInList: Int) : ListItem

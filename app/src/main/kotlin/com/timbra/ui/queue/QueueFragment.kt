@@ -27,10 +27,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/**
- * Shows the manually-enqueued (play-next) songs — already-played ones stay dimmed. Tap
- * to jump; long-press for Info/Share/Remove; drag the right-side handle to reorder.
- */
 class QueueFragment : Fragment(), MenuProvider {
 
     private var _b: FragmentListBinding? = null
@@ -77,9 +73,7 @@ class QueueFragment : Fragment(), MenuProvider {
             // viewLifecycleOwner-qualified: unqualified this resolves against the FRAGMENT, mixing
             // two owners inside a view-scoped coroutine (see Ext.kt for the correct form).
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                // The list membership only changes when the queue changes...
                 launch { player.queue.collect { fullQueue = it; refreshList() } }
-                // ...while the highlight/dim only needs the current index.
                 launch {
                     player.state.map { it.queueIndex }.distinctUntilChanged().collect {
                         if (!dragging) adapter.currentIndex = it
@@ -99,7 +93,6 @@ class QueueFragment : Fragment(), MenuProvider {
             return
         }
         missedQueueUpdate = false
-        // Show all enqueued songs; already-played ones remain (dimmed by the adapter).
         val next = fullQueue.filter { it.enqueued }
         if (next != displayed) {
             displayed = next
@@ -149,7 +142,6 @@ class QueueFragment : Fragment(), MenuProvider {
         override fun clearView(rv: RecyclerView, vh: RecyclerView.ViewHolder) {
             super.clearView(rv, vh)
             dragging = false
-            // Commit the new order to the player; the queue flow then refreshes cleanly.
             player.reorderQueue(adapter.currentItems().map { it.mediaId })
             // A reorder that reached the player re-emits and refreshes the list on its own, but
             // one that netted no move (or whose ids are gone) doesn't — so apply anything that

@@ -20,24 +20,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Minimal album-art loader (no third-party image lib). Decodes a thumbnail off the
- * main thread and caches per TRACK when a track Uri is available (art can be embedded
- * per-file: two tracks sharing an albumId may carry different covers), per album
- * otherwise. Guards against RecyclerView view reuse via a tag.
- *
- * Decodes are bounded to the size the target view actually renders at, and the cache is keyed by
- * that size: one shared 512px target served both the full-screen deck and the 48dp row
- * thumbnails, so every list row cached a ~1 MB bitmap it drew at a twelfth of the size and a
- * ~12 MB budget held about a dozen covers instead of ~150.
- */
 object ArtLoader {
 
-    /** Decode target for the full-screen art deck, and the ceiling for anything else. */
     private const val MAX_EDGE = 512
 
-    // Budget the cache in KB (~1/8 of the heap); sizeOf returns KB. Keys are the namespaced
-    // strings built in [load] ("t<trackId>@<edge>" / "a<albumId>@<edge>").
     private val cache = object : LruCache<String, Bitmap>(
         (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(4096),
     ) {
@@ -74,15 +60,6 @@ object ArtLoader {
         cache.evictAll()
     }
 
-    /**
-     * Load the track's art into [view], decoded no larger than [targetEdgePx] (by default the
-     * view's own fixed size, falling back to [MAX_EDGE] for a view that fills its space).
-     *
-     * There is deliberately NO placeholder image (Poweramp-style): [onArt] reports whether art
-     * exists so the caller can hide the view or show a brand mark instead. It may fire twice —
-     * false immediately (view cleared, nothing decoded yet), then true if the async decode lands
-     * (tag-guarded against view reuse).
-     */
     fun load(
         view: ImageView,
         owner: LifecycleOwner,
@@ -130,7 +107,6 @@ object ArtLoader {
         }
     }
 
-    /** The view's own fixed size when it has one (list thumbnails), else the full-deck cap. */
     private fun autoTarget(view: ImageView): Int {
         val lp = view.layoutParams
         val edge = maxOf(lp?.width ?: 0, lp?.height ?: 0)
@@ -149,7 +125,6 @@ object ArtLoader {
 
     private fun decode(context: Context, trackUri: Uri?, albumId: Long, target: Int): Bitmap? {
         val resolver = context.contentResolver
-        // API 29+: reliable thumbnail from the track content Uri.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && trackUri != null) {
             runCatching {
                 // Size is a REQUEST, not a bound — loadThumbnail returns whatever MediaStore has,
@@ -181,7 +156,6 @@ object ArtLoader {
                 mmr.setDataSource(context, trackUri)
                 mmr.embeddedPicture?.let { return decodeSampled(it, target) }
             } catch (_: Throwable) {
-                // Unreadable file / no picture — fall through to no-art.
             } finally {
                 mmr.release()
             }
@@ -189,7 +163,6 @@ object ArtLoader {
         return null
     }
 
-    /** [this] scaled down proportionally if either edge exceeds [target]; unchanged otherwise. */
     private fun Bitmap.cappedTo(target: Int): Bitmap {
         val longest = maxOf(width, height)
         if (longest <= target || longest == 0) return this

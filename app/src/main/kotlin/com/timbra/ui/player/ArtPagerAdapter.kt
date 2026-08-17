@@ -14,14 +14,6 @@ import com.timbra.databinding.ItemArtBinding
 import com.timbra.player.QueueItem
 import com.timbra.ui.ArtLoader
 
-/**
- * Pages the play queue's album art so it can be swiped like a deck of cards.
- *
- * Backed by [ListAdapter]/[DiffUtil] rather than `notifyDataSetChanged()`: an
- * identical re-emit of the queue (e.g. when the fragment returns to the foreground)
- * diffs to zero changes, so the ViewPager2 keeps its current page instead of being
- * reset to 0 — which is what used to trigger a phantom card-flip on resume.
- */
 class ArtPagerAdapter(
     private val owner: LifecycleOwner,
 ) : ListAdapter<QueueItem, ArtPagerAdapter.VH>(DIFF) {
@@ -59,7 +51,6 @@ class ArtPagerAdapter(
             override fun areItemsTheSame(a: QueueItem, b: QueueItem) =
                 a.timelineIndex == b.timelineIndex && a.mediaId == b.mediaId
 
-            // Only the album art is drawn per page, but full equality is cheap and correct.
             override fun areContentsTheSame(a: QueueItem, b: QueueItem) = a == b
         }
     }

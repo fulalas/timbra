@@ -31,7 +31,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Searches every song in the library (title / artist / album / filename). */
 class SearchFragment : Fragment() {
 
     private var _b: FragmentSearchBinding? = null
@@ -125,11 +124,6 @@ class SearchFragment : Fragment() {
         }
     }
 
-    /**
-     * A tapped search result can start playback two ways, so ask which: play all found
-     * songs (the tapped one first), or play the tapped song and continue through its folder
-     * (Advance-List then flows on into neighbouring folders).
-     */
     private fun promptPlay(index: Int) {
         // Snapshot the tapped list: a debounced search can replace `results` while this dialog
         // is open, so both actions must act on what the user actually tapped, not the live list.
@@ -150,7 +144,6 @@ class SearchFragment : Fragment() {
         }
     }
 
-    /** Play every result in [tracks], with the tapped song (at [index]) pulled to the front. */
     private fun playAllResults(tracks: List<Track>, index: Int) {
         val ordered = ArrayList<Track>(tracks.size)
         ordered += tracks[index]
@@ -158,7 +151,6 @@ class SearchFragment : Fragment() {
         player.play(ordered, 0)
     }
 
-    /** Play the tapped song within its folder, so playback continues down the folder list. */
     private fun playFolder(track: Track) {
         val dir = track.path.substringBeforeLast('/', "")
         viewLifecycleOwner.lifecycleScope.launch {

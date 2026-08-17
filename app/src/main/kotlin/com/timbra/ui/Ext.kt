@@ -19,11 +19,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/** The activity-owned [PlayerConnection]; every screen talks to the player through it. */
 val Fragment.player: PlayerConnection
     get() = (requireActivity() as MainActivity).player
 
-/** Keep [adapter]'s now-playing highlight on the current song for this view's lifetime. */
 fun Fragment.trackNowPlaying(adapter: LibraryListAdapter) {
     viewLifecycleOwner.lifecycleScope.launch {
         viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -56,13 +54,11 @@ fun Fragment.reloadOnLibraryChange(onChange: () -> Unit) {
     }
 }
 
-/** Standard vertical list wiring used by every browse screen. */
 fun RecyclerView.linearWithDivider(divider: Boolean = true) {
     layoutManager = LinearLayoutManager(context)
     if (divider) addItemDecoration(DividerItemDecoration(context, DividerItemDecoration.VERTICAL))
 }
 
-/** Apply the now-playing highlight (accent background + accent title) to a list row. */
 fun applyNowPlaying(root: View, title: TextView, playing: Boolean) {
     root.setBackgroundResource(if (playing) R.drawable.row_bg_playing else R.drawable.row_bg)
     title.setTextColor(
