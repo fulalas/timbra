@@ -21,8 +21,8 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library → overflow → About) and in the output APK filename.
-        versionCode = 125
-        versionName = "0.9.3"
+        versionCode = 127
+        versionName = "0.9.5"
 
         resValue("string", "app_name", appName)
 

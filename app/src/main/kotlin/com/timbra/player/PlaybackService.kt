@@ -141,7 +141,7 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
-                if (shuffleModeEnabled) resetShuffleSession(player)
+                if (shuffleModeEnabled) resetShuffleSession(player) else store.clearShuffleSession()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -466,10 +466,42 @@ class PlaybackService : MediaSessionService() {
         shufPlayed.clear()
         shufPos = 0
         if (count == 0) return
+        if (adoptShuffleRestore(player)) return
         val cur = player.currentMediaItemIndex.coerceIn(0, count - 1)
         shufHistory.add(cur)
         shufPlayed.add(cur)
         applyShuffleOrder(player)
+    }
+
+    /**
+     * Take over the session a cold start restored (see [PlaybackSession.offerShuffleRestore])
+     * instead of starting a fresh one, so the no-repeat pool survives the app being closed.
+     *
+     * [shufPos] is derived, not restored: the path holds each index at most once, so the playing
+     * song's place in it IS the position — and deriving it also absorbs a path that lost entries
+     * to tracks deleted since the save. Not finding the playing song there means the two came
+     * from different queues, and the caller's fresh session is the only safe answer.
+     *
+     * The fingerprint check is not redundant with that: an offer made while the timeline was
+     * still empty is never consumed here (the caller returns first), so it would otherwise sit in
+     * the session until some LATER, unrelated queue happened to contain the playing song — and a
+     * foreign played set skips most of a folder.
+     */
+    private fun adoptShuffleRestore(player: ExoPlayer): Boolean {
+        val restore = app.session.takeShuffleRestore() ?: return false
+        if (restore.fingerprint != queueFingerprint(lastIds)) return false
+        val count = player.mediaItemCount
+        val history = restore.history.filter { it in 0 until count }.distinct()
+        val at = history.indexOf(player.currentMediaItemIndex)
+        if (at < 0) return false
+        shufHistory.addAll(history)
+        shufPos = at
+        shufPlayed.addAll(restore.played.filter { it in 0 until count })
+        // The path is played by definition, and applyShuffleOrder's order is only a permutation
+        // when it is a subset of the played set.
+        shufPlayed.addAll(history)
+        applyShuffleOrder(player)
+        return true
     }
 
     private fun onShuffleAdvance(player: ExoPlayer, cur: Int) {
@@ -535,6 +567,7 @@ class PlaybackService : MediaSessionService() {
         }
         lastIds = mediaIds(player)
         lastEnqueuedCount = enqueuedCount(player)
+        store.saveShuffleSession(shufHistory, shufPlayed, queueFingerprint(lastIds))
         player.setShuffleOrder(DefaultShuffleOrder(order, System.nanoTime()))
     }
 

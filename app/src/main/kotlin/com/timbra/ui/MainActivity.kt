@@ -186,7 +186,15 @@ class MainActivity : AppCompatActivity() {
             }
             // The position only means anything for the song it was taken from.
             val positionMs = if (kept.getOrNull(index) == saved.index) saved.positionMs else 0L
-            player.restore(tracks, enqueuedFlags, index, positionMs, saved.shuffle, saved.repeat)
+            // The shuffle session is recorded as positions in the SAVED queue, so it has to travel
+            // through the same surviving-index map as everything else here.
+            val newIndexOf = HashMap<Int, Int>(kept.size)
+            kept.forEachIndexed { newIndex, savedIndex -> newIndexOf[savedIndex] = newIndex }
+            player.restore(
+                tracks, enqueuedFlags, index, positionMs, saved.shuffle, saved.repeat,
+                saved.shufHistory.mapNotNull { newIndexOf[it] },
+                saved.shufPlayed.mapNotNull { newIndexOf[it] },
+            )
             openPlayerOnce()
         }
     }

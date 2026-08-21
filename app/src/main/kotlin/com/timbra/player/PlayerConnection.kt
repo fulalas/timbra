@@ -321,9 +321,22 @@ class PlayerConnection(private val context: Context) {
         positionMs: Long,
         shuffle: ShuffleMode,
         repeat: RepeatMode,
+        shufHistory: List<Int>,
+        shufPlayed: List<Int>,
     ) {
         val c = controller ?: return
         markQueueReplaced(null)
+        // Before the queue goes in: enabling shuffle below is what makes the service build its
+        // session, and it has to find this waiting rather than start from scratch.
+        if (shuffle != ShuffleMode.OFF && shufHistory.isNotEmpty()) {
+            session.offerShuffleRestore(
+                PlaybackSession.ShuffleRestore(
+                    shufHistory,
+                    shufPlayed,
+                    queueFingerprint(tracks.map { it.id.toString() }),
+                )
+            )
+        }
         val start = index.coerceIn(0, maxOf(0, tracks.size - 1))
         c.setMediaItems(
             tracks.mapIndexed { i, t -> t.toMediaItem(context, enqueued = enqueuedFlags.getOrElse(i) { false }) },

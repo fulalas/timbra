@@ -4,6 +4,21 @@ package com.timbra.player
 import android.content.Context
 import androidx.media3.common.Player
 
+/**
+ * Order-sensitive hash of a queue's media ids.
+ *
+ * The saved shuffle session is a list of TIMELINE INDICES, so it means nothing against any other
+ * queue — and the session and the id list have two different writers (the service owns the
+ * session, [PlayerConnection] the queue), so a process death between their two transactions can
+ * leave them describing different queues. The session carries the fingerprint of the queue it was
+ * taken from and is dropped on load unless it still matches.
+ */
+fun queueFingerprint(mediaIds: List<String>): Int {
+    var h = 1
+    for (id in mediaIds) h = 31 * h + id.hashCode()
+    return h
+}
+
 class PlaybackStateStore(context: Context) {
 
     private val prefs =
@@ -16,6 +31,8 @@ class PlaybackStateStore(context: Context) {
         val positionMs: Long,
         val shuffle: ShuffleMode,
         val repeat: RepeatMode,
+        val shufHistory: List<Int>,
+        val shufPlayed: List<Int>,
     )
 
     /**
@@ -57,6 +74,32 @@ class PlaybackStateStore(context: Context) {
     }
 
     fun modesRevision(): Int = prefs.getInt(KEY_MODES_REV, 0)
+
+    /**
+     * The custom shuffle engine's no-repeat state, so a cold start doesn't re-open a pool the
+     * user is halfway through. Without it Next handed out songs already heard, and — because
+     * Advance-List only rolls into the next folder when the queue actually ENDS — a folder could
+     * repeat forever instead of advancing.
+     *
+     * [played] is a superset of [history]: the path drops entries the user branched away from,
+     * but they stay played. The current position within the path isn't stored — the path holds
+     * each index at most once, so the playing song locates itself in it.
+     */
+    fun saveShuffleSession(history: List<Int>, played: Set<Int>, fingerprint: Int) {
+        prefs.edit()
+            .putString(KEY_SHUF_HIST, joinInts(history))
+            .putString(KEY_SHUF_PLAYED, joinInts(played.toList()))
+            .putInt(KEY_SHUF_FP, fingerprint)
+            .apply()
+    }
+
+    fun clearShuffleSession() {
+        prefs.edit()
+            .remove(KEY_SHUF_HIST)
+            .remove(KEY_SHUF_PLAYED)
+            .remove(KEY_SHUF_FP)
+            .apply()
+    }
 
     // Pre-sized joins: these run on the main thread (from a Player.Listener callback), and a
     // 10k-track Shuffle-All queue grows an unsized StringBuilder through ~12 array copies.
@@ -101,6 +144,8 @@ class PlaybackStateStore(context: Context) {
             ?.filter { it in ids.indices }
             ?: emptyList()
         val (shuffle, repeat) = loadModes()
+        val sessionOk = prefs.contains(KEY_SHUF_HIST) &&
+            prefs.getInt(KEY_SHUF_FP, 0) == queueFingerprint(tokens)
         return Saved(
             trackIds = ids,
             enqueuedIndices = enqueued,
@@ -108,8 +153,17 @@ class PlaybackStateStore(context: Context) {
             positionMs = prefs.getLong(KEY_POS, 0).coerceAtLeast(0),
             shuffle = shuffle,
             repeat = repeat,
+            shufHistory = if (sessionOk) loadInts(KEY_SHUF_HIST, ids.indices) else emptyList(),
+            shufPlayed = if (sessionOk) loadInts(KEY_SHUF_PLAYED, ids.indices) else emptyList(),
         )
     }
+
+    private fun loadInts(key: String, valid: IntRange): List<Int> =
+        prefs.getString(key, null)
+            ?.split(",")
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.filter { it in valid }
+            ?: emptyList()
 
     /**
      * The persisted play modes — read independently of the saved queue, so a live-session
@@ -135,6 +189,9 @@ class PlaybackStateStore(context: Context) {
         const val KEY_INDEX = "index"
         const val KEY_POS = "position"
         const val KEY_MODES_REV = "modes_revision"
+        const val KEY_SHUF_HIST = "shuffle_history"
+        const val KEY_SHUF_PLAYED = "shuffle_played"
+        const val KEY_SHUF_FP = "shuffle_queue_fp"
 
         // Names, written since 0.8.0.
         const val KEY_SHUFFLE = "shuffle_name"

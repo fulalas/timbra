@@ -83,7 +83,7 @@ Confirm `arm64-v8a` + the FFmpeg libs (`libavcodec`, `libmedia3ext`, `libswresam
   engine), `PlayerConnection` (MediaController wrapper + `UiPlayback`/`QueueItem` state),
   `FolderAdvance` (THE shared folder move, used by both the service and the UI),
   `PlaybackSession` (queue facts shared across both owners, one atomic snapshot),
-  `PlaybackStateStore` (queue/position/modes persistence; modes stored by NAME),
+  `PlaybackStateStore` (queue/position/modes/shuffle-session persistence; modes stored by NAME),
   `PlayModes` (`ShuffleMode`/`RepeatMode` + `cycleNext`/`enumByName`),
   `MediaItems` (the single decode point for queue-item extras),
   `EqualizerAudioProcessor` + `EqSettings` (the 7-band DSP and its persistence),

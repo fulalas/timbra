@@ -43,6 +43,25 @@ class PlaybackSession {
     /** Serializes folder navigation across both owners, so two moves can't interleave. */
     val folderNavLock = Mutex()
 
+    /** [fingerprint] is [queueFingerprint] of the queue the restore was remapped ONTO, for the
+     *  same reason the persisted session carries one: these are timeline indices, so applying
+     *  them to any other queue marks never-played songs played. */
+    class ShuffleRestore(val history: List<Int>, val played: List<Int>, val fingerprint: Int)
+
+    private val shuffleRestore = AtomicReference<ShuffleRestore?>(null)
+
+    /**
+     * The no-repeat shuffle state a cold-start restore read back from disk, handed to the service
+     * — which is where the session lives, but which can't read it itself: the indices are relative
+     * to the SAVED queue, and only the restore knows how tracks deleted since then shifted them.
+     *
+     * Consumed once ([takeShuffleRestore] clears it), because only the queue build that the
+     * restore itself triggers is the one the state describes; every later one is a new session.
+     */
+    fun offerShuffleRestore(restore: ShuffleRestore) = shuffleRestore.set(restore)
+
+    fun takeShuffleRestore(): ShuffleRestore? = shuffleRestore.getAndSet(null)
+
     fun queueReplaced(folderContext: String?) {
         state.updateAndGet { State(it.generation + 1, folderContext) }
     }
