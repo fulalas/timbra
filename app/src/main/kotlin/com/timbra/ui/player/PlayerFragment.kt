@@ -77,6 +77,9 @@ class PlayerFragment : Fragment() {
 
     private var pagerIdle = true
 
+    /** The pager's own RecyclerView (see [alignDeck]). */
+    private var deckRv: RecyclerView? = null
+
     /**
      * True once the user has physically dragged since the pager last settled. onPageSelected
      * fires for programmatic moves and data-change clamps too (e.g. when a folder advance
@@ -301,6 +304,7 @@ class PlayerFragment : Fragment() {
         // Scan children for the RecyclerView rather than assuming it's index 0.
         for (i in 0 until b.artPager.childCount) {
             val rv = b.artPager.getChildAt(i) as? RecyclerView ?: continue
+            deckRv = rv
             rv.itemAnimator = null
             rv.addOnItemTouchListener(vDragListener)
         }
@@ -509,6 +513,29 @@ class PlayerFragment : Fragment() {
         pagerSynced = true
     }
 
+    /**
+     * Put the deck on the current song's page as part of the layout the just-committed list change
+     * has already scheduled. Only for rebuilds — it always requests a layout, so it must not run
+     * on the position tick (that is [syncPager]'s job).
+     *
+     * Both steps are needed. setCurrentItem keeps ViewPager2's own position honest, but it NO-OPS
+     * when that position is stale-equal to the target: it is a plain page index, and a restructured
+     * list (the timeline deck swapped for the 3-card shuffle one, or back) moves the pages under it.
+     * And a restructured deck has no surviving anchor child, so RecyclerView falls back to laying
+     * out from page 0 — a card nothing has decoded yet, which paints blank + brand for a frame or
+     * two: the flicker on the shuffle/repeat buttons. scrollToPosition on the LayoutManager is what
+     * actually pins the layout, and is a visual no-op when the deck is already resting there.
+     */
+    private fun alignDeck() {
+        if (advancing || !pagerIdle || vDragging) return
+        if (playerIndex < 0) return
+        val pos = pagePosOf(playerIndex)
+        if (pos !in 0 until artAdapter.itemCount) return
+        if (b.artPager.currentItem != pos) b.artPager.setCurrentItem(pos, false)
+        deckRv?.layoutManager?.scrollToPosition(pos)
+        pagerSynced = true
+    }
+
     private fun bindQueue() {
         // If this queue change is the swipe-driven folder advance landing, take the pager
         // straight from the phantom onto the new song in one move (see [rebuildPages]).
@@ -567,11 +594,11 @@ class PlayerFragment : Fragment() {
                 // the landing rebuild itself or the phantom rebuild that superseded it; either
                 // way the committed list carries the new queue, so the reposition is correct.
                 advancing -> finalizeAdvanceIfReady()
-                // Post the alignment out of the RecyclerView update pass: a setCurrentItem
-                // issued inside it gets deferred to the next layout frame, which may never
-                // come while paused — the stale reposition then swallows the next gesture.
-                // (Usually a no-op anyway: shuffle-deck rebuilds anchor on the resting card.)
-                else -> b.artPager.post { if (_b != null) syncPager(playerIndex, animate = false) }
+                // Aligned INSIDE the commit, not from a post: the scroll is then still pending
+                // when the layout this list change already scheduled runs, so the deck lays out
+                // straight onto the current song's page instead of painting a stray card first
+                // (see [alignDeck]).
+                else -> alignDeck()
             }
             // Signal a waiting vertical jump that a commit landed (see [awaitDeckCommit]).
             onDeckCommitted?.invoke()
@@ -876,7 +903,16 @@ class PlayerFragment : Fragment() {
                 syncPager(s.queueIndex, animate = animate)
             }
         }
+        // Leaving shuffle swaps the 3-card shuffle deck back for the timeline deck, and NOTHING
+        // ELSE guarantees that rebuild: updatePhantom only rebuilds when a phantom card actually
+        // changed, and with repeat-Song both shuffle phantoms are already "none" (next/previous
+        // MediaItemIndex return the current index under REPEAT_MODE_ONE) — while the restored
+        // timeline can carry the very same ids in the same order, so no queue emission arrives
+        // either. The deck then stayed a ONE-card shuffle deck: swipes dead, art frozen.
+        val leftShuffle = lastBound?.shuffle?.let { it != ShuffleMode.OFF } == true &&
+            s.shuffle == ShuffleMode.OFF
         updatePhantom(s)
+        if (leftShuffle) rebuildPages()
 
         // Belt-and-braces (runs every position tick): a phantom recompute can swap the leading
         // card underneath a RESTING pager — e.g. right after a folder jump, replacing the
@@ -921,6 +957,7 @@ class PlayerFragment : Fragment() {
         _b?.artPager?.removeCallbacks(pagerIdleHeal)
         titleMarquee?.stop()
         titleMarquee = null
+        deckRv = null
         _b = null
     }
 

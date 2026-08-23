@@ -132,6 +132,28 @@ class PlayerConnection(private val context: Context) {
 
     private var liveTransitionSeq = 0
 
+    /**
+     * One queue rebuild + persist per message-loop turn, however many timeline events land in it.
+     * Turning shuffle on or off rewrites the timeline in four steps (see [rebuildAroundCurrent])
+     * and each one fires EVENT_TIMELINE_CHANGED: the whole list was rebuilt and written to disk
+     * four times for one button press, and the player deck was rebuilt from each half-assembled
+     * intermediate. Posted rather than flag-gated around the surgery, because whether media3
+     * delivers those events inside the mutating call or after it is not ours to assume — either
+     * way they are all in the queue ahead of this.
+     */
+    private val queueRefresh = Runnable {
+        val c = controller ?: return@Runnable
+        val sig = queueIdsSignature(c)
+        if (sig == lastQueueIdsSig) return@Runnable
+        rebuildQueue(sig)
+        saveQueue()
+    }
+
+    private fun scheduleQueueRefresh() {
+        handler.removeCallbacks(queueRefresh)
+        handler.post(queueRefresh)
+    }
+
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             // Only actual playback movement observed live counts as a flip-worthy transition:
@@ -152,11 +174,7 @@ class PlayerConnection(private val context: Context) {
                 // also narrows the shuffle pool — adopt that before publishing anything else.
                 adoptExternalModes()
                 if (session.queueGeneration != knownQueueGeneration) adoptQueueReplacement()
-                val sig = queueIdsSignature(player)
-                if (sig != lastQueueIdsSig) {
-                    rebuildQueue(sig)
-                    saveQueue()
-                }
+                scheduleQueueRefresh()
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 // The play-next block is consumed as it plays: mark the song that just became
@@ -266,6 +284,12 @@ class PlayerConnection(private val context: Context) {
 
     fun release() {
         savePosition()
+        // FLUSH the pending refresh, don't drop it: it carries the queue persist, so a
+        // replacement still pending here (Home pressed right after it) would leave the stored
+        // ids describing the old queue while the index and position describe the new one — and
+        // load() only coerces the index, so the restore lands on the wrong song.
+        handler.removeCallbacks(queueRefresh)
+        queueRefresh.run()
         connectEpoch++
         handler.removeCallbacks(ticker)
         controller?.removeListener(listener)
