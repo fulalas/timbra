@@ -21,10 +21,18 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library → overflow → About) and in the output APK filename.
-        versionCode = 127
-        versionName = "0.9.5"
+        versionCode = 130
+        versionName = "0.9.8"
 
         resValue("string", "app_name", appName)
+
+        // The app ships no translations of its own, so its UI is English in every
+        // locale. AppCompat/Material/media3 dragged in 84 locales anyway, all landing
+        // in the uncompressed resources.arsc — ~450 KB to translate the back and
+        // overflow accessibility labels of an otherwise English app. AGP 8.7 has no
+        // androidResources.localeFilters yet (8.9+), so this is the deprecated spelling.
+        // Add a locale here only alongside a real values-<locale>/strings.xml.
+        resourceConfigurations += "en"
 
         // Explicit, so an unsupported ABI fails at INSTALL time. The jniLibs excludes below strip
         // the x86 .so files but do not stop the APK installing on an x86/x86_64 device, where
