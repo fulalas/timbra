@@ -29,17 +29,12 @@ class MediaRepository(context: Context) {
     private val unknownAlbum by lazy { appContext.getString(R.string.unknown_album) }
 
     /**
-     * A lazily-built, invalidatable cache.
-     *
      * [invalidate] bumps a generation, and a build that started before it publishes NOTHING —
      * the plain `field ?: build().also { field = it }` idiom could write pre-rescan data back
      * after the cache was cleared (the build is already inside the `?:` branch when invalidate
      * runs, and neither `@Volatile` nor coroutine cancellation stops the trailing assignment),
      * so a deleted track stayed in the library and in folder navigation indefinitely. The mutex
      * also stops two cold callers from running the same expensive query twice.
-     *
-     * One instance per cached value, never nested onto itself, so the mutexes can't deadlock
-     * even though the derived caches build from each other (tracks -> folderRoot -> songFolders).
      */
     private class Cache<T : Any> {
         @Volatile private var value: T? = null
@@ -92,15 +87,11 @@ class MediaRepository(context: Context) {
         withContext(Dispatchers.IO) { queryTracks() }
     }
 
-    /** Cached: the folder tree is rebuilt from all tracks, which is costly and was being
-     *  reconstructed on every folder navigation (Advance-List phantom lookups). */
     suspend fun folderRoot(): FolderNode = folderRootCache.get {
         val tracks = allTracks()
         withContext(Dispatchers.Default) { FolderTreeBuilder.build(tracks) }
     }
 
-    /** Cached flat traversal list ([FolderTreeBuilder.songFolders]) — folder navigation
-     *  consults it up to several times per gesture, so it must not re-walk the tree. */
     suspend fun songFolders(): List<FolderNode> = songFoldersCache.get {
         val root = folderRoot()
         withContext(Dispatchers.Default) { FolderTreeBuilder.songFolders(root) }
@@ -161,8 +152,6 @@ class MediaRepository(context: Context) {
                     while (c.moveToNext()) {
                         val id = c.getLong(idCol)
                         val name = c.getString(nameCol)?.takeIf { it.isNotBlank() } ?: continue
-                        // Row COUNT only — materializing every member id into a HashSet just to
-                        // read its size walked the whole Members table once per genre.
                         val count = genreMemberCount(id)
                         if (count > 0) out.add(Genre(id, name, count))
                     }
@@ -175,9 +164,6 @@ class MediaRepository(context: Context) {
     suspend fun tracksForGenre(genreId: Long): List<Track> {
         val tracks = allTracks()
         val members = genreMembersCache.get { ConcurrentHashMap() }
-        // Read-then-put on a concurrent map rather than a blocking `synchronized` around the
-        // query: holding a monitor across a content-provider call parks an IO dispatcher thread
-        // and serialises genres that share nothing. A rare duplicate query is the better trade.
         val ids = members[genreId] ?: withContext(Dispatchers.IO) { genreMemberIds(genreId) }
             .also { members[genreId] = it }
         return tracks.filter { it.id in ids }
@@ -253,22 +239,16 @@ class MediaRepository(context: Context) {
     }
 
     /**
-     * A marker of the audio table's current state, compared against the previous value to decide
-     * whether a refresh is needed at all ([com.timbra.TimbraApp.refreshLibraryIfChanged]).
      * Deliberately NOT cached — reading through to MediaStore is the entire point.
      *
-     * Row count and the newest DATE_ADDED / DATE_MODIFIED catch an add, a delete or an in-place
-     * retag. The path fold catches what they can't: a same-volume MOVE or RENAME changes neither
-     * the count nor the file's mtime, and in a folder-first player that is the change that matters
-     * most — the folder tree and the traversal list would otherwise keep serving a hierarchy that
-     * no longer exists. Summed (not accumulated in order), since the row order is unspecified.
+     * The path fold catches what the row count and the newest DATE_ADDED / DATE_MODIFIED can't:
+     * a same-volume MOVE or RENAME changes neither the count nor the file's mtime, and the folder
+     * tree and the traversal list would otherwise keep serving a hierarchy that no longer exists.
+     * Summed (not accumulated in order), since the row order is unspecified.
      *
-     * Everything is folded here rather than asked for as `count(*)`/`max(...)`: MediaStore
-     * validates the projection on Android 10+ and rejects anything that isn't a real column, so
-     * SQL aggregates are unavailable. That makes this O(rows) — one cursor walk on the IO
-     * dispatcher, roughly an order of magnitude under [queryTracks] (which reads eleven columns,
-     * four of them strings, and allocates a [Track] and a Uri per row), but NOT free: it is why
-     * the caller compares before refreshing instead of refreshing outright.
+     * Folded here rather than asked for as `count(*)`/`max(...)`: MediaStore validates the
+     * projection on Android 10+ and rejects anything that isn't a real column, so SQL aggregates
+     * are unavailable.
      */
     suspend fun libraryFingerprint(): String = withContext(Dispatchers.IO) {
         var count = 0
@@ -377,8 +357,6 @@ class MediaRepository(context: Context) {
         if (this.isNullOrBlank() || this == "<unknown>") "" else this
 
     companion object {
-        /** Parsed once — [albumArtUri] is called per track while a queue is built (10k times
-         *  for Shuffle-All), and re-parsing the constant allocated a Uri each time. */
         private val ALBUM_ART_BASE: Uri = Uri.parse("content://media/external/audio/albumart")
 
         fun albumArtUri(albumId: Long): Uri = ContentUris.withAppendedId(ALBUM_ART_BASE, albumId)

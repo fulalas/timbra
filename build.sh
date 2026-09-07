@@ -16,7 +16,6 @@ done
 JDK_FEATURE="${JDK_FEATURE:-17}"
 GRADLE_VERSION="${GRADLE_VERSION:-8.13}"
 CMDLINE_BUILD="${CMDLINE_BUILD:-11076708}"
-# compileSdk is the single source of truth in app/build.gradle.kts; build-tools follows it.
 COMPILE_SDK="$(sed -n 's/^ *compileSdk *= *\([0-9]\+\).*/\1/p' "$DIR/app/build.gradle.kts" | head -1)"
 COMPILE_SDK="${COMPILE_SDK:-35}"
 BUILD_TOOLS="${BUILD_TOOLS:-${COMPILE_SDK}.0.0}"
@@ -122,13 +121,9 @@ NAME_LC=$(echo "${NAME:-app}" | tr '[:upper:]' '[:lower:]')
 TASK="${TASK:-assembleRelease}"
 log "Building $NAME ($TASK)"
 cd "$DIR"
-# The Gradle daemon is left ON by default: --no-daemon costs a fresh JVM and a full configuration
-# phase (10-30s) on every run, which fights org.gradle.caching and the "bump the version and
-# rebuild on EVERY change" workflow. Set TIMBRA_GRADLE_FLAGS=--no-daemon for a one-shot/CI build.
 "$GRADLE" "$TASK" ${TIMBRA_GRADLE_FLAGS:-}
 
 VERSION=$(sed -n 's/.*versionName *= *"\(.*\)".*/\1/p' "$DIR/app/build.gradle.kts")
-# Pick the APK for the variant we actually built (avoids grabbing a stale debug/release).
 case "$TASK" in
     *[Rr]elease*) VARIANT=release ;;
     *) VARIANT=debug ;;

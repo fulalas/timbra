@@ -39,12 +39,10 @@ echo "== Clean-installing $(basename "$APK") as $PKG =="
 adb uninstall "$PKG" >/dev/null 2>&1 || true
 adb install "$APK"
 
-# --- Restore the home-screen shortcut at its fixed cell (cellX=1, cellY=4: col 2, row 5) ---
 adb root >/dev/null 2>&1 || true
 sleep 1
 DB=/data/data/com.android.launcher3/databases/launcher.db
 INTENT="#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;launchFlags=0x10200000;component=${PKG}/.ui.MainActivity;end"
-# Force-stop the launcher first so it reloads from the DB (and won't overwrite our edit).
 adb shell am force-stop com.android.launcher3
 printf "%s\n" \
   "DELETE FROM favorites WHERE intent LIKE '%${PKG_SQL}/%';" \

@@ -30,7 +30,6 @@ object ArtLoader {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
     }
 
-    /** albumIds already known to have no artwork, so we don't retry the I/O on every bind. */
     private val misses = java.util.Collections.synchronizedSet(HashSet<Long>())
 
     /** Per-TRACK misses (keyed by the track's MediaStore id). Art can be embedded per-file,
@@ -46,9 +45,8 @@ object ArtLoader {
     private val generation = AtomicInteger(0)
 
     /**
-     * Drop the negative-result set and cached bitmaps. Called on library rescans — without
-     * this, an album whose art was added after a miss would show the placeholder until the
-     * process died (and stale art would survive re-tagging).
+     * Without this, an album whose art was added after a miss would show the placeholder until
+     * the process died (and stale art would survive re-tagging).
      */
     fun invalidate() {
         // AtomicInteger: `generation++` is a read-modify-write, and a lost increment is what lets
@@ -70,18 +68,15 @@ object ArtLoader {
     ) {
         val target = targetEdgePx.coerceIn(1, MAX_EDGE)
         val trackId = trackUri?.let { runCatching { ContentUris.parseId(it) }.getOrNull() }
-        // Cache/reuse key: per-track when the Uri identifies one (embedded art differs between
-        // files of the same album), album-level otherwise. Namespaced — track and album ids
-        // live in different MediaStore tables and would collide as raw longs — and suffixed with
-        // the decode size, so the deck's 512px and a list's 144px coexist instead of one
-        // evicting the other.
+        // Namespaced — track and album ids live in different MediaStore tables and would collide
+        // as raw longs — and suffixed with the decode size, so the deck's 512px and a list's
+        // 144px coexist instead of one evicting the other.
         val key = (if (trackId != null) "t$trackId" else "a$albumId") + "@$target"
         view.setTag(R.id.art_tag, key)
         cache.get(key)?.let { view.setImageBitmap(it); onArt(true); return }
         view.setImageDrawable(null)
         onArt(false)
         if (trackUri == null && albumId < 0) return
-        // Negative cache, split the same way: an album miss must not veto a Uri-bearing sibling.
         if (trackId != null) { if (trackId in trackMisses) return }
         else if (albumId >= 0 && albumId in misses) return
 
@@ -91,7 +86,6 @@ object ArtLoader {
         val startedAt = generation.get()
         owner.lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) { decode(context, trackUri, albumId, target) }
-            // A rescan happened while we were decoding: this result describes the old library.
             if (generation.get() != startedAt) return@launch
             if (bmp != null) {
                 cache.put(key, bmp)
@@ -114,9 +108,8 @@ object ArtLoader {
     }
 
     /**
-     * Drop a view's art and disown any in-flight decode (retag so a late callback's tag-guard
-     * fails). Call from `onViewRecycled` so a pooled ImageView never carries a previous song's
-     * cover into its next attachment.
+     * Call from `onViewRecycled` so a pooled ImageView never carries a previous song's cover
+     * into its next attachment (the retag also disowns any in-flight decode).
      */
     fun clear(view: ImageView) {
         view.setTag(R.id.art_tag, null)
@@ -149,7 +142,7 @@ object ArtLoader {
         // Last resort: read the picture embedded in the file's own tags. MediaStore's thumbnail
         // and album-art table both miss covers on plenty of files (it simply never indexed them),
         // so a track the user knows has art still showed the blank brand — this reads it straight
-        // from the file, independent of MediaStore. Runs off the main thread (decode is on IO).
+        // from the file, independent of MediaStore.
         if (trackUri != null) {
             val mmr = MediaMetadataRetriever()
             try {
@@ -173,8 +166,6 @@ object ArtLoader {
     }
 
     /**
-     * Decode [pic] with neither edge above [target].
-     *
      * The loop tests the UN-halved dimension, so the result is bounded BY the target rather than
      * merely above it: testing the already-halved one stopped a step early, letting a 1023² cover
      * decode full-size (~4.2 MB) against a budget sized for ~1 MB — enough for one bitmap to

@@ -24,11 +24,9 @@ class FolderSort(context: Context) {
         set(value) = prefs.edit().putString(KEY_VIEW, value.name).apply()
 
     private companion object {
-        // Names, written since 0.8.0.
         const val KEY_SORT = "folder_sort_order_name"
         const val KEY_VIEW = "folder_view_as_name"
 
-        // Ordinals, written before 0.8.0 — read once, to migrate an existing install.
         const val KEY_SORT_LEGACY = "folder_sort_order"
         const val KEY_VIEW_LEGACY = "folder_view_as"
     }

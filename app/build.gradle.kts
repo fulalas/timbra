@@ -21,8 +21,8 @@ android {
         targetSdk = 35
         // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
         // app (Library → overflow → About) and in the output APK filename.
-        versionCode = 133
-        versionName = "0.9.11"
+        versionCode = 137
+        versionName = "0.9.15"
 
         resValue("string", "app_name", appName)
 
@@ -74,8 +74,6 @@ android {
     }
 
     testOptions {
-        // Android framework stubs return defaults instead of throwing, so pure-logic tests can
-        // run on the JVM without Robolectric.
         unitTests.isReturnDefaultValues = true
     }
 
@@ -86,8 +84,6 @@ android {
 
     packaging {
         jniLibs {
-            // Compress the FFmpeg .so files in the APK (extracted at install) instead of
-            // AGP's default uncompressed packaging — roughly halves the download size.
             useLegacyPackaging = true
             // The FFmpeg libs ship prebuilt in the nextlib AAR for all ABIs; ndk.abiFilters
             // doesn't strip dependency jniLibs, so drop the emulator-only x86 ABIs here.

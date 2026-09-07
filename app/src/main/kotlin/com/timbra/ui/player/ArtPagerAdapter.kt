@@ -28,7 +28,6 @@ class ArtPagerAdapter(
         // Load via the track's content Uri (not albumId alone) so the deck finds embedded art
         // through loadThumbnail — same path the browse list uses — instead of only the legacy
         // album-art table, which misses covers on albums MediaStore didn't index there.
-        // Pages without art show the glowing app mark instead of a generic placeholder.
         ArtLoader.load(holder.b.pageArt, owner, MediaRepository.trackUri(item.mediaId), item.albumId) { has ->
             holder.b.pageBrand.isVisible = !has
         }

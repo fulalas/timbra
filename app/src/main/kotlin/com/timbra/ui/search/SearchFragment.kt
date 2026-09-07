@@ -66,9 +66,6 @@ class SearchFragment : Fragment() {
         b.recycler.adapter = adapter
 
         b.searchInput.addTextChangedListener { onQuery(it?.toString().orEmpty()) }
-        // The layout declares imeOptions=actionSearch, which puts a Search key on the keyboard.
-        // Results are already live-debounced, so the useful thing for it to do is get the keyboard
-        // out of the way of the results this screen went to some trouble to raise.
         b.searchInput.setOnEditorActionListener { _, _, _ -> hideKeyboard(); true }
         // Pop the keyboard as soon as Search opens so the user can type straight away. Posted so
         // it runs after the view is attached. Search is reached from the overflow menu, whose
@@ -97,8 +94,6 @@ class SearchFragment : Fragment() {
 
     private fun onQuery(raw: String) {
         searchJob?.cancel()
-        // NOT lowercased: the matching below is already case-insensitive, so folding here was
-        // pure waste (and could only ever change which characters the user's own input matched).
         val query = raw.trim()
         if (query.isEmpty()) {
             results = emptyList()
@@ -108,7 +103,7 @@ class SearchFragment : Fragment() {
             return
         }
         searchJob = viewLifecycleOwner.lifecycleScope.launch {
-            delay(200) // debounce rapid keystrokes
+            delay(200)
             val all = requireContext().repository.allTracks()
             val filtered = withContext(Dispatchers.Default) {
                 all.filter {
@@ -158,11 +153,7 @@ class SearchFragment : Fragment() {
             val order = requireContext().folderSort.sortOrder
             val node = repo.songFolders().firstOrNull { it.path == dir }
             val all = if (node == null) repo.allTracks() else emptyList()
-            // The filter + natural sort are whole-library work in the fallback case; the repo
-            // calls hop back to Main, so do them on Default rather than on the UI thread.
             val folderTracks = withContext(Dispatchers.Default) {
-                // If the folder node isn't found, rebuild it by directory from all tracks rather
-                // than degrading to a one-song queue — "Its folder" should queue the whole folder.
                 node?.tracksInPlayOrder(order)
                     ?: all.filter { it.path.substringBeforeLast('/', "") == dir }.sortedBy(order)
             }
@@ -173,9 +164,9 @@ class SearchFragment : Fragment() {
     }
 
     /**
-     * Focus the field and force the on-screen keyboard up. Explicit show (flag 0), NOT
-     * SHOW_IMPLICIT: the framework drops an implicit request when it thinks a hardware
-     * keyboard is present (e.g. a GSI's virtual input device), so the keyboard never appears.
+     * Explicit show (flag 0), NOT SHOW_IMPLICIT: the framework drops an implicit request when
+     * it thinks a hardware keyboard is present (e.g. a GSI's virtual input device), so the
+     * keyboard never appears.
      */
     private fun showKeyboard() {
         val et = _b?.searchInput ?: return
@@ -190,7 +181,6 @@ class SearchFragment : Fragment() {
             ?.hideSoftInputFromWindow(et.windowToken, 0)
     }
 
-    /** Detach the pending window-focus listener from the exact observer it was added to. */
     private fun removeImeFocusListener() {
         val listener = imeFocusListener ?: return
         imeFocusObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener)

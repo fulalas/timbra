@@ -4,12 +4,6 @@ package com.timbra.ui
 import java.util.Locale
 
 object Format {
-    /**
-     * Milliseconds -> "m:ss" or "h:mm:ss". Built by hand rather than with String.format: this
-     * runs on every position tick of both players, on every seek-bar drag callback, and once
-     * per row bind while a list is flung — and String.format re-parses its pattern and
-     * allocates a Formatter on each call.
-     */
     fun clock(ms: Long): String {
         if (ms <= 0) return "0:00"
         val totalSec = ms / 1000

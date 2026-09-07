@@ -12,7 +12,7 @@
         </shape>
     </item>
     <!-- Without a mask the ripple is clipped to the drawable's RECTANGULAR bounds and spills
-         past the 6dp corners below. row_bg.xml does the same thing. -->
+         past the 6dp corners below. -->
     <item android:id="@android:id/mask">
         <shape android:shape="rectangle">
             <corners android:radius="6dp" />

@@ -15,7 +15,6 @@ class TransportBinder(
     private val onSeek: (Long) -> Unit,
 ) {
 
-    /** True while a finger is on the bar, so position ticks don't fight the drag. */
     private var userSeeking = false
 
     init {
@@ -35,11 +34,8 @@ class TransportBinder(
         })
     }
 
-    /**
-     * Apply [s]. [prev] is the state last applied (null re-applies everything), so the 500ms
-     * position ticks only touch the views whose source actually changed — setImageResource in
-     * particular reloads and invalidates even for an unchanged resource id.
-     */
+    /** setImageResource reloads and invalidates even for an unchanged resource id, so the
+     *  500ms position ticks must only touch the views whose source actually changed. */
     fun bind(s: UiPlayback, prev: UiPlayback?) {
         if (prev == null || s.isPlaying != prev.isPlaying) {
             play.setImageResource(if (s.isPlaying) R.drawable.deck_pause else R.drawable.deck_play)

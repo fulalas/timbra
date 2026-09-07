@@ -54,7 +54,6 @@ class TrackListFragment : Fragment(), MenuProvider {
      */
     private var playable: List<Track> = emptyList()
 
-    /** The in-flight [load]; replacing it cancels the old one, so only the newest build commits. */
     private var loadJob: Job? = null
 
     private val isTrackMode: Boolean get() = kind in TRACK_KINDS
@@ -106,8 +105,6 @@ class TrackListFragment : Fragment(), MenuProvider {
             // mapping below runs on Dispatchers.Default, and Fragment.getString() there would
             // throw once the user navigated away mid-load.
             val res = requireContext().resources
-            // The queries are IO-dispatched, but the whole-library natural sort isn't free —
-            // keep it (and the row mapping) off the main thread too.
             val built = withContext(Dispatchers.Default) { when (kind) {
                 KIND_SONGS -> trackRows(repo.allTracks().sortedBy(sortOrder))
                 KIND_ALBUM -> trackRows(repo.tracksForAlbum(listId).sortedBy(sortOrder))
@@ -129,7 +126,6 @@ class TrackListFragment : Fragment(), MenuProvider {
                 else -> Built(emptyList(), emptyList())
             } }
             _b ?: return@launch
-            // Commit the rows and what they play in one step, on the main thread.
             playable = built.playable
             adapter.submit(built.items)
             b.empty.isVisible = built.items.isEmpty()

@@ -15,7 +15,6 @@ import android.view.animation.AnimationUtils
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -34,6 +33,7 @@ import com.timbra.player.cycleNext
 import com.timbra.repository
 import com.timbra.ui.Format
 import com.timbra.ui.MainActivity
+import com.timbra.ui.Popup
 import com.timbra.ui.TitleMarquee
 import com.timbra.ui.TransportBinder
 import com.timbra.ui.player
@@ -67,17 +67,10 @@ class PlayerFragment : Fragment() {
 
     private var pagerSynced = false
 
-    /**
-     * The [UiPlayback.liveTransitionSeq] value last handled. The card flip animates only when the
-     * sequence has advanced since the previous bind — i.e. ExoPlayer reported a genuine live
-     * AUTO/SEEK song transition. A song that changed while we were backgrounded arrives via a
-     * reconnect state-sync (which doesn't advance the sequence), so it snaps into place instead.
-     */
     private var lastLiveSeq = 0
 
     private var pagerIdle = true
 
-    /** The pager's own RecyclerView (see [alignDeck]). */
     private var deckRv: RecyclerView? = null
 
     /**
@@ -90,17 +83,10 @@ class PlayerFragment : Fragment() {
 
     private val queueItems: List<QueueItem> get() = player.queue.value
 
-    /**
-     * Advance-List phantom cards: [phantomPrev] leads the queue (previous folder's last song),
-     * [phantomNext] trails it (next folder's first song). Null when that neighbour doesn't
-     * exist. [phantomKey] is the song folder they were computed for, so they aren't recomputed
-     * on every position tick.
-     */
     private var phantomPrev: QueueItem? = null
     private var phantomNext: QueueItem? = null
     private var phantomKey: String? = null
 
-    /** Pager positions are shifted by 1 when a leading (previous-folder) card is present. */
     private val leadOffset get() = if (phantomPrev != null) 1 else 0
 
     /**
@@ -112,8 +98,6 @@ class PlayerFragment : Fragment() {
 
     private var advanceReady = false
 
-    /** mediaId of the last bound track, so [bind] animates only on a real song change (not a
-     *  re-index from a queue rebuild). */
     private var lastBoundMediaId = -1L
 
     /** The state [bind] last applied. Most emissions are 500ms position ticks, so the static
@@ -136,8 +120,6 @@ class PlayerFragment : Fragment() {
      */
     private var pendingAdvance: (() -> Unit)? = null
 
-    /** True while a vertical-swipe folder jump is in flight, so a repeated gesture can't
-     *  fire a second jump from stale state. */
     private var folderJumping = false
 
     /** True while [runAdvance]'s advanceFolder call is actually suspended. Distinguishes a
@@ -145,8 +127,6 @@ class PlayerFragment : Fragment() {
      *  disturbed) from a STRANDED `advancing` latch that the self-heal may safely clear. */
     private var advanceInFlight = false
 
-    /** True while a finger holds the deck in a vertical drag. Gates deck mutations:
-     *  [syncPager] and [rebuildPages] must not move/rebuild pages under the held finger. */
     private var vDragging = false
 
     /** True while [cycleShuffle]'s library load is still suspended, so a second tap can't be
@@ -155,8 +135,6 @@ class PlayerFragment : Fragment() {
 
     private var deckGlide: Runnable? = null
 
-    /** One-shot hook invoked from [rebuildPages]' submitList commit callback, so
-     *  [jumpFolder] can await deck commits instead of polling (see [awaitDeckCommit]). */
     private var onDeckCommitted: (() -> Unit)? = null
 
     /** Physical flick speed (px/s) that commits a folder jump — density-scaled so the same
@@ -216,12 +194,6 @@ class PlayerFragment : Fragment() {
                 v.systemGestureExclusionRects = listOf(Rect(0, bandTop, right - left, bandTop + band))
             }
         }
-        // Vertical swipes on the art deck jump to a sibling folder — up = next, down =
-        // previous, in filename order. A direct jump (NOT history navigation). Like the
-        // pager's own horizontal swipe, the deck FOLLOWS the finger: a dominantly-vertical
-        // move past the touch slop claims the gesture from the RecyclerView, drags the deck
-        // by translationY, and the release either commits the jump (enough travel or a
-        // matching flick) or springs back.
         val touchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
         val vDragListener = object : RecyclerView.OnItemTouchListener {
             private var downRawX = 0f
@@ -247,9 +219,6 @@ class PlayerFragment : Fragment() {
                         ) {
                             val dx = e.rawX - downRawX
                             val dy = e.rawY - anchorY
-                            // Dominantly vertical, past the slop, and no horizontal page
-                            // scroll under way — claim the stream (a spring-back glide may
-                            // be caught mid-flight and re-owned by the finger).
                             if (abs(dy) > touchSlop && abs(dy) > 2 * abs(dx)) {
                                 vDragging = true
                                 deckGlide = null
@@ -301,7 +270,6 @@ class PlayerFragment : Fragment() {
         // Kill the default item-change animation on the pager's RecyclerView. When a folder
         // advance swaps the queue, its ~230ms remove/insert animation renders the changing
         // pages empty (black) mid-transition — the flicker seen at the end of the swipe.
-        // Scan children for the RecyclerView rather than assuming it's index 0.
         for (i in 0 until b.artPager.childCount) {
             val rv = b.artPager.getChildAt(i) as? RecyclerView ?: continue
             deckRv = rv
@@ -316,41 +284,27 @@ class PlayerFragment : Fragment() {
                 // stays in SETTLING across the queue swap and would otherwise carry onto the new
                 // folder's phantom and advance again (and again), cascading through folders.
                 if (!sawDrag || advancing) return
-                // Shuffle: the deck is just [previous-played?, current, shuffle-next?]. A swipe
-                // can only land on an edge card; a missing neighbour means that swipe was never
-                // possible (no card to swipe onto — e.g. no going back at the history start, no
-                // forward once everything has played). Consume the drag so follow-up selection
-                // events from the deck rebuild are never mistaken for another user action.
+                // Consume the drag, so follow-up selection events from the deck rebuild are
+                // never mistaken for another user action.
                 if (player.state.value.shuffle != ShuffleMode.OFF) {
                     when {
                         position < leadOffset -> { sawDrag = false; player.previousSong() }
                         position > leadOffset -> {
                             sawDrag = false
                             if (player.hasNext()) player.next()
-                            // Trailing card with nothing unplayed left = the Advance-List
-                            // next-folder fallback: defer the folder advance to the settle.
                             else armAdvance(forward = true)
                         }
                     }
                     return
                 }
-                // Shuffle off: pages mirror the timeline, edges are Advance-List folder cards.
-                // Defer the folder advance until the swipe settles (see the settle handler) so
-                // the queue doesn't swap mid-fling.
                 if (phantomPrev != null && position == 0) {
                     armAdvance(forward = false); return
                 }
                 if (phantomNext != null && position == leadOffset + queueItems.size) {
                     armAdvance(forward = true); return
                 }
-                // A swipe moves through songs with the SAME transport calls as the
-                // previous/next buttons — one code path, so the two can never drift apart.
-                // The deck only decides the direction. Neither call starts a paused player.
-                // A backward flip is always a real song change (the landed card IS the
-                // previous song's), so it takes the strict previous-song move — the
-                // restart-current-song step belongs to the button, whose press carries no
-                // such visual target. Anything but a one-page move is not a user swipe
-                // (programmatic moves/clamps land here too) and must not touch playback.
+                // Anything but a one-page move is not a user swipe (programmatic moves and
+                // clamps land here too) and must not touch playback.
                 when ((position - leadOffset) - playerIndex) {
                     +1 -> player.next()
                     -1 -> player.previousSong()
@@ -376,15 +330,8 @@ class PlayerFragment : Fragment() {
                     _b?.artPager?.removeCallbacks(pagerIdleHeal)
                     sawDrag = false
                     when {
-                        // Swipe just settled on the phantom: now run the deferred advance. The
-                        // deceleration has played out fully (identical to an in-folder swipe);
-                        // the queue swap happens from rest.
                         pendingAdvance != null -> { val go = pendingAdvance!!; pendingAdvance = null; go() }
-                        // New queue already landed: reposition onto the real (identical) page.
                         advancing -> finalizeAdvanceIfReady()
-                        // A deck rebuild waited for the gesture to finish, or the pager simply
-                        // needs to be back on the playing track — the same "settle the deck"
-                        // policy the vertical drag applies.
                         else -> afterVerticalDrag()
                     }
                 }
@@ -418,9 +365,6 @@ class PlayerFragment : Fragment() {
                 // didn't reset the flag. Snap the first realignment after every foreground
                 // entry too, otherwise the re-emit animates a card flip for no reason.
                 pagerSynced = false
-                // Forget the applied titles so the re-emit re-sets them — both the toolbar
-                // path and the song title should marquee-scroll on EVERY entry to this
-                // screen, foreground returns included.
                 currentFilePath = ""
                 boundTitle = null
                 lastBound = null
@@ -465,9 +409,6 @@ class PlayerFragment : Fragment() {
     }
 
     /**
-     * Arm a folder advance to run once the swipe settles (see the settle handler), so the queue
-     * doesn't swap mid-fling. One place, so the three-flag latch can't be half-set.
-     *
      * The queue generation is captured HERE, at the moment of the gesture — not when the deferred
      * block finally runs. If the last track ends by itself during the fling, the service's own
      * advance lands first; reading the generation late would see its NEW value, pass the staleness
@@ -480,8 +421,13 @@ class PlayerFragment : Fragment() {
         pendingAdvance = { runAdvance(forward, gen) }
     }
 
+    /**
+     * Announce a mode change in the deck's own overlay, NOT a Toast: the system queues toasts and
+     * plays each one for its full duration, so cycling the shuffle/repeat button quickly replayed
+     * the backlog and the message on screen lagged several taps behind the actual mode.
+     */
     private fun showModePopup(msg: String) {
-        Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+        Popup.show(_b?.modePopup ?: return, msg)
     }
 
     private fun showModePopup(titleRes: Int, subRes: Int?) = showModePopup(buildString {
@@ -499,8 +445,6 @@ class PlayerFragment : Fragment() {
             // phantom until finalizeAdvanceIfReady jumps it). A state-driven sync here would run
             // before the queue rebuild and land on the OLD queue's index — a wrong-folder flash.
             if (advancing) return
-            // Don't fight a gesture in progress — neither a horizontal drag/fling nor a held
-            // vertical drag; the settle handlers re-sync once at rest ([afterVerticalDrag]).
             if (!pagerIdle || vDragging) return
         }
         val pos = pagePosOf(index)
@@ -514,10 +458,6 @@ class PlayerFragment : Fragment() {
     }
 
     /**
-     * Put the deck on the current song's page as part of the layout the just-committed list change
-     * has already scheduled. Only for rebuilds — it always requests a layout, so it must not run
-     * on the position tick (that is [syncPager]'s job).
-     *
      * Both steps are needed. setCurrentItem keeps ViewPager2's own position honest, but it NO-OPS
      * when that position is stale-equal to the target: it is a plain page index, and a restructured
      * list (the timeline deck swapped for the 3-card shuffle one, or back) moves the pages under it.
@@ -537,25 +477,16 @@ class PlayerFragment : Fragment() {
     }
 
     private fun bindQueue() {
-        // If this queue change is the swipe-driven folder advance landing, take the pager
-        // straight from the phantom onto the new song in one move (see [rebuildPages]).
         val landingAdvance = advancing
-        // The shuffle phantoms are built FROM the queue, so a queue change invalidates them.
         phantomKey = null
         updatePhantom(player.state.value)
         rebuildPages(landingAdvance)
     }
 
     /**
-     * Push the queue (plus any phantom cards) to the pager. A structural change like this
-     * always snaps — only in-place track transitions animate. submitList commits the diff
-     * asynchronously, so itemCount only reflects the new list once the commit callback fires:
-     * align the pager there, otherwise the first load (empty -> N) would read a stale count.
-     *
-     * [landingAdvance] means the queue just changed because a swiped folder advance completed:
-     * force the pager onto the new song right here (interrupting the fling, before the frame
-     * draws so there's no clamp flash), then end the advance. A phantom recompute that lands
-     * here mid-advance leaves the pager alone — the pending advance will position it.
+     * submitList commits the diff asynchronously, so itemCount only reflects the new list once
+     * the commit callback fires: align the pager there, otherwise the first load (empty -> N)
+     * would read a stale count.
      */
     private fun rebuildPages(landingAdvance: Boolean = false) {
         // Never mutate the deck under a live gesture — horizontal (positions shift beneath
@@ -567,10 +498,6 @@ class PlayerFragment : Fragment() {
         val current = items.getOrNull(playerIndex)
         val pages = ArrayList<QueueItem>(items.size + 2)
         if (player.state.value.shuffle != ShuffleMode.OFF && current != null) {
-            // Shuffle: a 3-card deck — the song actually played before (if any), the current
-            // song, and the upcoming shuffle pick (or the Advance-List folder fallback). A
-            // missing neighbour means that swipe is impossible: no card, no gesture. All cards
-            // share SHUFFLE_CARD_INDEX so rebuilds anchor on the resting card (see companion).
             phantomPrev?.let { pages.add(it) }
             pages.add(current.copy(timelineIndex = SHUFFLE_CARD_INDEX))
             phantomNext?.let { pages.add(it) }
@@ -590,9 +517,6 @@ class PlayerFragment : Fragment() {
             // this runs (rapid nav / rotation), so bail before touching b/requireActivity().
             if (_b == null) return@submitList
             when {
-                // ANY commit that lands while an advance is waiting finalizes it — this may be
-                // the landing rebuild itself or the phantom rebuild that superseded it; either
-                // way the committed list carries the new queue, so the reposition is correct.
                 advancing -> finalizeAdvanceIfReady()
                 // Aligned INSIDE the commit, not from a post: the scroll is then still pending
                 // when the layout this list change already scheduled runs, so the deck lays out
@@ -600,21 +524,10 @@ class PlayerFragment : Fragment() {
                 // (see [alignDeck]).
                 else -> alignDeck()
             }
-            // Signal a waiting vertical jump that a commit landed (see [awaitDeckCommit]).
             onDeckCommitted?.invoke()
         }
     }
 
-    /**
-     * Vertical-swipe folder jump (see [MainActivity.jumpToNeighbourFolder]), with the same
-     * slide transition as the horizontal deck — just vertical: the deck glides out in the
-     * swipe direction while the neighbour folder loads, then the new song's art glides in
-     * from the opposite edge. The slide-in waits (bounded) until the new song is current
-     * AND the rebuilt deck has committed (submitList is async), otherwise it would show
-     * the OLD folder's art for a frame; the folder-name popup is shown at that same moment
-     * so the announcement and the landing can't contradict each other. A no-op jump (edge
-     * of the library) glides back to rest.
-     */
     private fun jumpFolder(forward: Boolean) {
         // The settle callback matters on this path too: settleVerticalDrag's COMMIT branch calls
         // us INSTEAD of glideDeckTo(0f) { afterVerticalDrag() }, relying on the finally block below
@@ -640,11 +553,18 @@ class PlayerFragment : Fragment() {
                     // the art cache has already claimed an eighth of.
                     val bmp = Bitmap.createBitmap(b.artPager.width, b.artPager.height, Bitmap.Config.RGB_565)
                     b.artPager.draw(Canvas(bmp))
-                    ImageView(requireContext()).apply { setImageBitmap(bmp) }
+                    ImageView(requireContext()).apply {
+                        id = R.id.deck_snapshot
+                        setImageBitmap(bmp)
+                    }
                 }.getOrNull()
                 if (overlay != null) {
+                    // Added UNDER the deck's own children (the pager is hidden below, so the
+                    // snapshot is what shows): appended on top it covered the mode popup, hiding
+                    // the folder-name announcement this jump makes for the whole glide.
                     b.deckWindow.addView(
                         overlay,
+                        0,
                         FrameLayout.LayoutParams(b.artPager.width, b.artPager.height),
                     )
                     // draw() captures content untranslated — carry the finger's offset over so the
@@ -658,8 +578,6 @@ class PlayerFragment : Fragment() {
                 }
                 val folder = main.jumpToNeighbourFolder(forward)
                 if (folder == null) {
-                    // No neighbour folder (or nothing playing): spring back from wherever the
-                    // outgoing leg is; the finally below reveals the pager and drops the overlay.
                     overlay?.let { b.artPager.translationY = it.translationY }
                     glideDeckTo(0f)
                     return@launch
@@ -691,8 +609,12 @@ class PlayerFragment : Fragment() {
                 folderJumping = false
                 _b?.let { bb ->
                     bb.artPager.visibility = View.VISIBLE
-                    while (bb.deckWindow.childCount > 1) {
-                        bb.deckWindow.removeViewAt(bb.deckWindow.childCount - 1)
+                    // By id, not by index: the deck window also holds the mode popup, and an
+                    // index-based sweep ("everything after the pager") deleted it for good.
+                    for (i in bb.deckWindow.childCount - 1 downTo 0) {
+                        if (bb.deckWindow.getChildAt(i).id == R.id.deck_snapshot) {
+                            bb.deckWindow.removeViewAt(i)
+                        }
                     }
                     // Apply anything the held finger deferred. The COMMIT branch of
                     // settleVerticalDrag doesn't run [afterVerticalDrag] (only the spring-back
@@ -727,8 +649,6 @@ class PlayerFragment : Fragment() {
     }
 
     /**
-     * Latch the pager busy for a programmatic smooth scroll, with a bounded recovery.
-     *
      * The matching SCROLL_STATE_IDLE only arrives while the pager keeps getting animation
      * frames, and a smooth scroll begun as the window stops drawing (screen off, a dialog over
      * the player) never delivers one. Every deck mutation is gated on [pagerIdle], so the deck
@@ -881,10 +801,6 @@ class PlayerFragment : Fragment() {
             // advance the sequence, so it snaps into place instead of spuriously flipping.
             val animate = pagerSynced && s.liveTransitionSeq != lastLiveSeq
             if (s.shuffle != ShuffleMode.OFF) {
-                // Button-press transitions (pager at rest): flip onto the edge card that
-                // previews this song; the deferred rebuild then re-centers invisibly on the
-                // same art. Swipe transitions are already mid-gesture and settle on their
-                // own. Never while a finger holds the deck in a vertical drag.
                 if (pagerIdle && !advancing && !vDragging) {
                     val target = when (s.mediaId) {
                         phantomNext?.mediaId -> leadOffset + 1
@@ -903,27 +819,40 @@ class PlayerFragment : Fragment() {
                 syncPager(s.queueIndex, animate = animate)
             }
         }
-        // Leaving shuffle swaps the 3-card shuffle deck back for the timeline deck, and NOTHING
-        // ELSE guarantees that rebuild: updatePhantom only rebuilds when a phantom card actually
-        // changed, and with repeat-Song both shuffle phantoms are already "none" (next/previous
-        // MediaItemIndex return the current index under REPEAT_MODE_ONE) — while the restored
-        // timeline can carry the very same ids in the same order, so no queue emission arrives
-        // either. The deck then stayed a ONE-card shuffle deck: swipes dead, art frozen.
-        val leftShuffle = lastBound?.shuffle?.let { it != ShuffleMode.OFF } == true &&
-            s.shuffle == ShuffleMode.OFF
-        updatePhantom(s)
-        if (leftShuffle) rebuildPages()
+        // The queue flow lags the state flow by a message-loop turn ([PlayerConnection] posts its
+        // queue rebuild), so a state pushed by a timeline REPLACEMENT — cycling shuffle to OFF
+        // restores the pre-shuffle queue — carries an index into a queue nobody has published
+        // yet. Every deck decision below would then read the OLD queue's song at the NEW index:
+        // the deck was rebuilt around, and aligned onto, an unrelated card whose art isn't
+        // cached, so the cover blanked until the real queue landed. Leaving it alone is safe —
+        // a mismatch means the ids changed, so a queue emission is already posted, and
+        // [bindQueue] does all of this from the pair that agrees.
+        val queueLags = s.hasItem && queueItems.getOrNull(s.queueIndex)?.mediaId != s.mediaId
+        if (!queueLags) {
+            // Leaving shuffle swaps the 3-card shuffle deck back for the timeline deck, and
+            // NOTHING ELSE guarantees that rebuild: updatePhantom only rebuilds when a phantom
+            // card actually changed, and with repeat-Song both shuffle phantoms are already
+            // "none" (next/previous MediaItemIndex return the current index under
+            // REPEAT_MODE_ONE) — while the restored timeline can carry the very same ids in the
+            // same order, so no queue emission arrives either. The deck then stayed a ONE-card
+            // shuffle deck: swipes dead, art frozen.
+            val leftShuffle = lastBound?.shuffle?.let { it != ShuffleMode.OFF } == true &&
+                s.shuffle == ShuffleMode.OFF
+            updatePhantom(s)
+            if (leftShuffle) rebuildPages()
 
-        // Belt-and-braces (runs every position tick): a phantom recompute can swap the leading
-        // card underneath a RESTING pager — e.g. right after a folder jump, replacing the
-        // previous-folder card can leave ViewPager2 parked on it, showing the neighbour
-        // folder's cover while a different song plays — and nothing else re-aligns a pager
-        // whose song did NOT change. syncPager's own gates (mid-gesture, advancing, jumping,
-        // out-of-range) make this a strict no-op except when the deck is at rest off the
-        // current page. Skipped on the song-change tick itself: that bind may have just
-        // started an intentional flip onto an edge card (shuffle) that must not be undone.
-        if (s.hasItem && !songChanged && s.shuffle == ShuffleMode.OFF) {
-            syncPager(s.queueIndex, animate = false)
+            // Belt-and-braces (runs every position tick): a phantom recompute can swap the
+            // leading card underneath a RESTING pager — e.g. right after a folder jump,
+            // replacing the previous-folder card can leave ViewPager2 parked on it, showing the
+            // neighbour folder's cover while a different song plays — and nothing else
+            // re-aligns a pager whose song did NOT change. syncPager's own gates (mid-gesture,
+            // advancing, jumping, out-of-range) make this a strict no-op except when the deck
+            // is at rest off the current page. Skipped on the song-change tick itself: that
+            // bind may have just started an intentional flip onto an edge card (shuffle) that
+            // must not be undone.
+            if (s.hasItem && !songChanged && s.shuffle == ShuffleMode.OFF) {
+                syncPager(s.queueIndex, animate = false)
+            }
         }
 
         // Marquee the title only when it actually changes (bind runs every position tick, and
@@ -947,8 +876,6 @@ class PlayerFragment : Fragment() {
         transport.bind(s, prev)
         lastBound = s
 
-        // Track the live-transition sequence so the NEXT bind can tell a genuine transition
-        // (sequence advanced) from a re-sync of the same state (sequence unchanged).
         lastLiveSeq = s.liveTransitionSeq
     }
 

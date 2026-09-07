@@ -58,18 +58,8 @@ private val Track.discOrFirst: Int get() = if (discNo <= 0) 1 else discNo
 
 fun List<Track>.sortedBy(order: SortOrder): List<Track> = sortedWith(comparatorFor(order))
 
-/**
- * A folder's songs in canonical play order — the ONE order every folder entry point uses
- * (folder taps, Advance-List advances from the UI or the detached service, search's
- * "its folder"), so they can never land on differently-ordered queues. [order] comes from the
- * user's persisted folder-sort choice ([FolderSort]), which is what the browse list shows.
- */
 fun FolderNode.tracksInPlayOrder(order: SortOrder): List<Track> = tracks.sortedBy(order)
 
-/**
- * Natural (alphanumeric) string order: digit runs compare as numbers, so "2" sorts
- * before "10", and text compares case-insensitively.
- */
 val NATURAL: Comparator<String> = Comparator { a, b -> naturalCompare(a, b) }
 
 private fun naturalCompare(a: String, b: String): Int {
@@ -79,11 +69,9 @@ private fun naturalCompare(a: String, b: String): Int {
         val ca = a[i]
         val cb = b[j]
         if (ca.isDigit() && cb.isDigit()) {
-            // Compare the digit runs IN PLACE — skip leading zeros, then order by run length
-            // and, failing that, digit by digit. Filenames are overwhelmingly "01 Title", so
-            // this branch is taken by nearly every comparison; the substring+trimStart form
-            // allocated two to four short-lived strings each time, on a comparator that runs
-            // on the main thread during folder advances.
+            // Filenames are overwhelmingly "01 Title", so this branch runs on nearly every
+            // comparison; the substring+trimStart form allocated two to four short-lived strings
+            // each time, on a comparator that runs on the main thread during folder advances.
             while (i < a.length && a[i] == '0') i++
             while (j < b.length && b[j] == '0') j++
             var endA = i

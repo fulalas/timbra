@@ -50,8 +50,8 @@ class QueueAdapter(
     fun submit(list: List<QueueItem>) {
         // A real diff, not notifyDataSetChanged(): PlayerConnection re-emits the queue on every
         // timeline change (and after markCurrentEnqueuedPlayed), so a blanket invalidation rebound
-        // every visible row — re-issuing an ArtLoader.load per row and dropping item animations and
-        // drag state. The sibling ArtPagerAdapter is DiffUtil-backed for exactly this reason.
+        // every visible row — re-issuing an ArtLoader.load per row and dropping item animations
+        // and drag state.
         val old = items
         items = list
         DiffUtil.calculateDiff(object : DiffUtil.Callback() {
@@ -91,16 +91,11 @@ class QueueAdapter(
         holder.b.subtitle.text = Format.subtitle(item.artist, item.album)
         holder.b.root.alpha = if (played) 0.4f else 1f
         applyNowPlaying(holder.b.root, holder.b.title, playing)
-        // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not
-        // GONE) so every row's text stays aligned in a mixed queue.
-        // Load via the track's content Uri so embedded-only covers are found here too.
         ArtLoader.load(holder.b.thumb, owner, MediaRepository.trackUri(item.mediaId), item.albumId) {
             holder.b.thumb.isInvisible = !it
         }
         holder.b.root.setOnClickListener { onClick(item) }
         holder.b.root.setOnLongClickListener { onLong(item); true }
-        // Only PENDING entries can be reordered — a consumed one has nothing left to reorder,
-        // and dragging it would ask the player to move an item it can no longer place.
         holder.b.dragHandle.isInvisible = played
         holder.b.dragHandle.setOnTouchListener { _, e ->
             if (!played && e.actionMasked == MotionEvent.ACTION_DOWN) onDragStart(holder)

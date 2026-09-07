@@ -45,10 +45,6 @@ class TimbraApp : Application() {
     private var refreshJob: Job? = null
     private var burstStartedAt = 0L
 
-    /**
-     * [MediaRepository.libraryFingerprint] as the library caches were last known to match it.
-     * Only null before the first measurement of the process, when nothing can be stale yet.
-     */
     private var seenFingerprint: String? = null
 
     /** Serialises the two writers of [seenFingerprint] — the foreground probe and the
@@ -64,39 +60,29 @@ class TimbraApp : Application() {
         super.onCreate()
         // Watched for the whole process life, never unregistered: songs copied to the device while
         // the app sits in the background must invalidate the caches too, or coming back shows the
-        // library from before the copy. Costs nothing while nothing is on screen — invalidate()
-        // only DROPS the caches, and the re-query is lazy. notifyForDescendants, because a
-        // per-file insert notifies that row's item Uri, not the collection's.
+        // library from before the copy. notifyForDescendants, because a per-file insert notifies
+        // that row's item Uri, not the collection's.
         contentResolver.registerContentObserver(
             MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, audioObserver,
         )
     }
 
     /**
-     * Coalesce a burst of MediaStore notifications into ONE refresh: the scanner signals per file,
-     * so copying an album fires dozens, and every refresh throws away the track list, the folder
-     * tree, the traversal cache and the whole art cache. Settle for [SETTLE_MS] of quiet — but
-     * never hold off longer than [MAX_WAIT_MS] past the first signal, because a few hundred files
-     * keep signalling for minutes and the list has to update WHILE the copy runs, not only after.
+     * Never hold off longer than [MAX_WAIT_MS] past the first signal: a few hundred files keep
+     * signalling for minutes, and the list has to update WHILE the copy runs, not only after.
      */
     private fun onMediaStoreChanged() {
         val now = SystemClock.uptimeMillis()
-        // Only a signal arriving with no refresh already pending opens a new burst window.
         if (refreshJob?.isActive != true) burstStartedAt = now
         val wait = (burstStartedAt + MAX_WAIT_MS - now).coerceAtMost(SETTLE_MS)
         refreshJob?.cancel()
         refreshJob = appScope.launch {
-            delay(wait) // non-positive once the cap is reached -> refresh straight away
+            delay(wait)
             // NOT refreshLibrary(): that cancels refreshJob, which is this very coroutine.
             doRefreshLibrary()
         }
     }
 
-    /**
-     * Measure MediaStore's marker and adopt it as the baseline; true if it MOVED since the last
-     * adoption. Never true on the first measurement of the process — there is nothing to compare
-     * against, and the caches are cold anyway, so they will be built from this very state.
-     */
     private suspend fun adoptFingerprint(): Boolean = fingerprintLock.withLock {
         val fingerprint = repository.libraryFingerprint()
         val moved = seenFingerprint?.let { it != fingerprint } == true
@@ -105,18 +91,16 @@ class TimbraApp : Application() {
     }
 
     /**
-     * Refresh only if MediaStore actually moved. The foreground-return backstop for signals
-     * [audioObserver] never saw — the process was recreated since, or the provider coalesced them
-     * away. Refreshing blindly here instead would re-query the library and re-decode every cover
-     * on every app switch, which is exactly what the epoch guard in `reloadOnLibraryChange`
-     * exists to avoid.
+     * Refreshing blindly on every foreground return would re-query the library and re-decode
+     * every cover on every app switch, which is exactly what the epoch guard in
+     * `reloadOnLibraryChange` exists to avoid.
      */
     suspend fun refreshLibraryIfChanged() {
         if (adoptFingerprint()) refreshLibrary()
     }
 
     /**
-     * An app-initiated refresh. Supersedes any pending debounced one: MediaProvider notifies the
+     * Supersedes any pending debounced refresh: MediaProvider notifies the
      * ACTING app's observers too, so a delete or a manual rescan would otherwise be followed by a
      * duplicate full refresh — another whole-library re-query and art evictAll — a second later.
      */

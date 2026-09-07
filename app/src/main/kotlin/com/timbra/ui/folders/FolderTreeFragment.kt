@@ -58,24 +58,15 @@ class FolderTreeFragment : Fragment(), MenuProvider {
     private class Loaded(
         val items: List<ListItem>,
         val playable: List<Track>,
-        /** The Advance-List anchor for a queue built from these rows: the browsed folder in
-         *  hierarchy view, and nothing in flat view (the queue spans a whole subtree that no
-         *  single directory names, so the playing file's own folder is the better anchor). */
         val folderContext: String?,
     )
 
     private var loaded = Loaded(emptyList(), emptyList(), null)
 
-    /** The in-flight [load]; replacing it cancels the old one, so only the newest build commits. */
     private var loadJob: Job? = null
 
-    // On the first load after arriving here (e.g. the player's song-info tap opens the
-    // playing track's folder), center that track in the list. Consumed once, so later
-    // reloads (a rescan) don't yank the user's scroll position around.
     private var centerOnPlaying = true
 
-    /** Persisted app-wide, because it also decides the order folder QUEUES are built in
-     *  (see [com.timbra.data.FolderSort]). */
     private val folderSort get() = requireContext().folderSort
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
@@ -121,7 +112,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             val root = requireContext().repository.folderRoot()
             val viewAs = folderSort.viewAs
             val order = folderSort.sortOrder
-            // The natural sort over a big folder isn't free — keep it off the main thread.
             val result = withContext(Dispatchers.Default) {
                 val node = FolderTreeBuilder.find(root, folderPath) ?: root
                 val items = ArrayList<ListItem>()
@@ -140,7 +130,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             }
 
             _b ?: return@launch
-            // Commit the rows and what they play in one step, on the main thread.
             loaded = result
             adapter.submit(result.items)
             b.empty.isVisible = result.items.isEmpty()
@@ -160,8 +149,8 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             val lm = rv.layoutManager as? LinearLayoutManager ?: return@post
             if (lm.findFirstCompletelyVisibleItemPosition() == 0 &&
                 lm.findLastCompletelyVisibleItemPosition() == items.lastIndex
-            ) return@post // the whole list fits — leave the scroll alone
-            lm.scrollToPosition(pos) // make the target's view exist so it can be measured
+            ) return@post
+            lm.scrollToPosition(pos)
             rv.post {
                 val rv2 = _b?.recycler ?: return@post
                 val rowH = rv2.findViewHolderForAdapterPosition(pos)?.itemView?.height

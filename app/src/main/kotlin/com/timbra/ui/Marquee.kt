@@ -8,14 +8,10 @@ import androidx.core.view.doOnLayout
 
 class TitleMarquee(private val tv: TextView) {
 
-    /** The [TextView] this instance drives, so an owner can tell whether a re-fetched (shared)
-     *  view is still the same instance and reuse this controller rather than double-driving it. */
     val view: TextView get() = tv
 
-    /** The in-flight run; replacing it (or [stop]) cancels the old one, checked by identity. */
     private var scroll: Runnable? = null
 
-    /** The clean (single) string, so a re-run never doubles an already-doubled text. */
     private var text: String = ""
 
     /**
@@ -27,20 +23,11 @@ class TitleMarquee(private val tv: TextView) {
      */
     private var epoch = 0
 
-    /** Set the text and marquee it once when it doesn't fit; ellipsizing is dropped (it would
-     *  shrink the layout we scroll). Safe to call every frame only if the text is unchanged —
-     *  a genuinely new string restarts the loop, so callers should guard on change. */
     fun set(value: String) {
         text = value
         scrollOnce()
     }
 
-    /**
-     * Return the view to its stock, non-scrolling, end-ellipsized state and cancel any run.
-     * Leaves the text alone: a SHARED toolbar view has its title replaced by navigation right
-     * after, and a dedicated view is either about to get a fresh [set] or is being destroyed —
-     * so restoring the single string here would only risk clobbering the next screen's title.
-     */
     fun stop() {
         epoch++
         scroll = null
@@ -65,7 +52,7 @@ class TitleMarquee(private val tv: TextView) {
             if (epoch != startedAt) return@doOnLayout
             val viewport = tv.width - tv.paddingLeft - tv.paddingRight
             val lineWidth = tv.paint.measureText(text)
-            if (lineWidth <= viewport) { scroll = null; return@doOnLayout } // fits — no scroll
+            if (lineWidth <= viewport) { scroll = null; return@doOnLayout }
 
             val density = tv.resources.displayMetrics.density
             val gapPx = GAP_DP * density
@@ -80,7 +67,7 @@ class TitleMarquee(private val tv: TextView) {
                 override fun run() {
                     if (scroll !== this || tv.text !== doubled) return
                     val t = AnimationUtils.currentAnimationTimeMillis() - t0
-                    if (t < START_HOLD_MS) { // brief readable pause on the start
+                    if (t < START_HOLD_MS) {
                         tv.postOnAnimation(this); return
                     }
                     val p = (t - START_HOLD_MS) / outMs

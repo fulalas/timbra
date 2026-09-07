@@ -7,7 +7,6 @@ import com.timbra.data.sortedBy
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** The per-order comparators, including the three defects the review found in them. */
 class SortingTest {
 
     @Test fun `title order uses the DISPLAYED title, not the raw tag`() {
@@ -97,7 +96,6 @@ class SortingTest {
             assertEquals("$order must be idempotent", once, once.sortedBy(order))
             assertEquals("$order must not drop or add tracks", tracks.size, once.size)
             assertEquals("$order must be a permutation", tracks.toSet(), once.toSet())
-            // Deterministic regardless of input order — the "ONE canonical order" contract.
             assertEquals("$order must not depend on input order", once, tracks.reversed().sortedBy(order))
         }
     }

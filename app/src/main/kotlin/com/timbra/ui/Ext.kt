@@ -32,9 +32,6 @@ fun Fragment.trackNowPlaying(adapter: LibraryListAdapter) {
 }
 
 /**
- * Run [onChange] once for this view, and again whenever the library is rescanned — the reload
- * wiring every browse screen needs (it was duplicated verbatim, guard and comment included).
- *
  * The epoch guard matters: the collector restarts on every foreground return and the StateFlow
  * replays its value, so without it the whole list was re-sorted and rebound on every app switch.
  * It is scoped to the VIEW, so a screen coming back through the back stack repopulates its fresh

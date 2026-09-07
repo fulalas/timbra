@@ -39,7 +39,6 @@ class QueueFragment : Fragment(), MenuProvider {
     private var displayed: List<QueueItem> = emptyList()
     private var dragging = false
 
-    /** A queue emission arrived while a drag held the list; re-apply it on the drop. */
     private var missedQueueUpdate = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
@@ -121,7 +120,6 @@ class QueueFragment : Fragment(), MenuProvider {
     private fun dragCallback() = object : ItemTouchHelper.SimpleCallback(
         ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0,
     ) {
-        // Drag is started manually from the handle, not by long-press (that opens the menu).
         override fun isLongPressDragEnabled() = false
 
         override fun onMove(

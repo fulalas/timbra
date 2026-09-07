@@ -4,8 +4,6 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- Deck window: clips the pager to the art region so a card-flip glide (translationY)
-         slides WITHIN this area and never draws over the transport controls below. -->
     <FrameLayout
         android:id="@+id/deck_window"
         android:layout_width="match_parent"
@@ -17,6 +15,22 @@
             android:id="@+id/art_pager"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <TextView
+            android:id="@+id/mode_popup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/popup_bg"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:gravity="center"
+            android:textColor="@color/pa_text_primary"
+            android:textSize="14sp"
+            android:visibility="gone" />
     </FrameLayout>
 
     <include

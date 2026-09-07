@@ -75,15 +75,10 @@ class PlaybackService : MediaSessionService() {
 
     private var stallMark = 0L
 
-    // --- Custom shuffle engine ---
-    // ExoPlayer's built-in shuffle is a fixed permutation, so Prev/Next just retrace it and can
-    // revisit songs. Instead we drive ExoPlayer's shuffle ORDER ourselves so that: Next always
-    // goes to a random UNPLAYED song (no repeats), Previous returns the actual song played before,
-    // and once everything has played Next stops. State is per shuffle "session" and resets when
-    // shuffle is toggled or the queue is replaced.
-    private val shufHistory = mutableListOf<Int>()   // timeline indices, actual play path
-    private var shufPos = 0                           // index of the current song within shufHistory
-    private val shufPlayed = mutableSetOf<Int>()      // every index played this session (no-repeat)
+    private val shufHistory = mutableListOf<Int>()
+    private var shufPos = 0
+    private val shufPlayed = mutableSetOf<Int>()
+
     /** Timeline media ids at the last (re)build. Tells a real queue change from our own
      *  setShuffleOrder (which also fires onTimelineChanged, and would otherwise loop forever),
      *  and locates a "play next" insertion so the session can absorb it (see [insertionShift]).
@@ -101,8 +96,6 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
-        // Apply persisted equalizer settings to the DSP before the pipeline starts. The
-        // app-wide instance, not a second wrapper over the same prefs file.
         val eq = eqSettings
         eqProcessor.update(eq.enabled, eq.gains())
 
@@ -110,7 +103,6 @@ class PlaybackService : MediaSessionService() {
         // true gapless — they read/trim encoder delay+padding) and fall back to the FFmpeg
         // decoders only for formats the device can't handle natively. PREFER routed every
         // track through FFmpeg, which left an audible gap between songs.
-        // EqRenderersFactory splices the equalizer DSP into the audio sink.
         val renderers = EqRenderersFactory(this)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
 
@@ -124,7 +116,7 @@ class PlaybackService : MediaSessionService() {
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .build(),
-                /* handleAudioFocus = */ true,
+                true,
             )
             .setHandleAudioBecomingNoisy(true)
             // Matches the WAKE_LOCK permission the manifest declares: without this the
@@ -169,18 +161,12 @@ class PlaybackService : MediaSessionService() {
                 ) return
                 val ids = mediaIds(player)
                 if (ids == lastIds) return
-                // A "play next" insertion must fold INTO the running session (so the enqueued song
-                // is what plays next and the no-repeat history survives); anything else is a queue
-                // replacement and starts a fresh session.
                 val shift = insertionShift(lastIds, ids)
                 if (shift == null || !adoptEnqueueInsertion(player, shift)) resetShuffleSession(player)
             }
 
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 if (!player.shuffleModeEnabled) return
-                // REPEAT (repeat-one) stays on the same song; PLAYLIST_CHANGED is handled by the
-                // timeline reset above. Everything else (AUTO advance, SEEK from Next/Prev/tap)
-                // moves the current song, so update the shuffle path.
                 if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT ||
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
                 ) return
@@ -208,8 +194,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Wraps the player so Advance-List's queue-edge behaviour applies to EVERY transport source.
-     *
      * It used to live only in the UI's [PlayerConnection], so the same Next issued from the
      * notification, the lock screen or a Bluetooth remote reached ExoPlayer directly — and since
      * Advance-List maps to REPEAT_MODE_OFF, seeking past the last item is simply a no-op, so
@@ -251,14 +235,6 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /**
-     * Handle a transport command that ran off the end (or the start) of the queue by stepping to
-     * the neighbouring folder. Returns true when it took the command.
-     *
-     * Backward stepping is deliberately limited to the very start of the first song with shuffle
-     * OFF: mid-song Previous must still restart the song, and under shuffle Previous only walks
-     * back through the songs actually played this session.
-     */
     private fun advanceAtEdge(forward: Boolean): Boolean {
         val player = exoPlayer ?: return false
         if (player.mediaItemCount == 0) return false
@@ -329,10 +305,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Recover from a track playback can't get through — one that errors out (missing file,
-     * unsupported/corrupt container) or wedges at the very end (see [watchForEndStall]) — by
-     * moving on to the next one, exactly as if it had finished.
-     *
      * Without this the player is simply wedged: a failed track leaves ExoPlayer IDLE holding the
      * error, so it never advances, and the session's play request only re-prepares the SAME broken
      * item — which errors again instantly. To the user the app looks frozen with a dead play
@@ -352,8 +324,6 @@ class PlaybackService : MediaSessionService() {
             player.currentMediaItemIndex, repeat, player.shuffleModeEnabled,
         )
         if (next == C.INDEX_UNSET) {
-            // The still-stuck test is just "not playing": a stalled/errored track never reaches
-            // STATE_ENDED. The media-id guard inside [advanceFolder] pins it to the same song.
             advanceFolder(player, forward = true) { !player.isPlaying }
             return
         }
@@ -374,18 +344,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Watch a buffering spell and, if it never clears at the very end of a track, finish the track
-     * instead of hanging there.
-     *
      * These are local files, so mid-track buffering is always pathological. The case that actually
      * happens: some rips declare a duration that overruns their real audio, and seeking into that
      * phantom tail lands past the final frame — the renderer then waits forever for samples that
      * don't exist. Playback freezes a second short of the end with the transport still showing
      * "playing", and never rolls into the next song. (Playing the same file straight through is
      * fine: the extractor hits a clean end-of-input, so only a seek can trigger it.)
-     *
-     * Deliberately narrow — it acts only when the position has stopped moving AND is inside the
-     * last [END_STALL_WINDOW_MS] — so an ordinary slow load is left alone.
      */
     private fun watchForEndStall(player: ExoPlayer, playbackState: Int) {
         stallHandler.removeCallbacks(endStallCheck)
@@ -399,14 +363,14 @@ class PlaybackService : MediaSessionService() {
             val player = exoPlayer ?: return
             if (player.playbackState != Player.STATE_BUFFERING || !player.playWhenReady) return
             val position = player.currentPosition
-            if (position != stallMark) {          // still making progress: keep watching
+            if (position != stallMark) {
                 stallMark = position
                 stallHandler.postDelayed(this, END_STALL_TIMEOUT_MS)
                 return
             }
             val duration = player.duration
             if (duration == C.TIME_UNSET || position < duration - END_STALL_WINDOW_MS) return
-            skipStuckTrack(player)                // same recovery as a track that errors out
+            skipStuckTrack(player)
         }
     }
 
@@ -416,11 +380,6 @@ class PlaybackService : MediaSessionService() {
     private fun enqueuedCount(player: ExoPlayer): Int =
         (0 until player.mediaItemCount).count { player.getMediaItemAt(it).isEnqueued }
 
-    /**
-     * Old-index → new-index map when [new] is [old] with items inserted, else null (a genuine
-     * queue replacement, where nothing about the old session can be carried over). Matching is
-     * a greedy subsequence walk, which is enough here: any leftover slot is a newly inserted one.
-     */
     private fun insertionShift(old: List<String>, new: List<String>): IntArray? {
         if (old.isEmpty() || new.size <= old.size) return null
         val map = IntArray(old.size)
@@ -430,13 +389,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Fold a "play next" insertion into the running shuffle session: shift the recorded indices
-     * through [shift] so the play path and the no-repeat set still point at the right songs, then
-     * rebuild the order (which puts the enqueued songs next — see [applyShuffleOrder]).
-     *
-     * Returns false when this isn't actually a play-next insert, and the caller should reset
-     * instead. Two conditions matter: the playing song must be untouched, and the enqueued-item
-     * COUNT must have grown by exactly the number of inserted slots. The count is what makes this
+     * Two conditions matter: the playing song must be untouched, and the enqueued-item COUNT must
+     * have grown by exactly the number of inserted slots. The count is what makes this
      * duplicate-proof — the old check demanded that every slot the id walk left over carry the
      * enqueued flag, but when the enqueued song is a copy of the one already sitting next to it,
      * the walk can't tell the two apart and blamed the wrong one. That rejected a genuine enqueue
@@ -474,9 +428,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Take over the session a cold start restored (see [PlaybackSession.offerShuffleRestore])
-     * instead of starting a fresh one, so the no-repeat pool survives the app being closed.
-     *
      * [shufPos] is derived, not restored: the path holds each index at most once, so the playing
      * song's place in it IS the position — and deriving it also absorbs a path that lost entries
      * to tracks deleted since the save. Not finding the playing song there means the two came
@@ -497,8 +448,6 @@ class PlaybackService : MediaSessionService() {
         shufHistory.addAll(history)
         shufPos = at
         shufPlayed.addAll(restore.played.filter { it in 0 until count })
-        // The path is played by definition, and applyShuffleOrder's order is only a permutation
-        // when it is a subset of the played set.
         shufPlayed.addAll(history)
         applyShuffleOrder(player)
         return true
@@ -510,11 +459,11 @@ class PlaybackService : MediaSessionService() {
         }
         val c = cur.coerceIn(0, player.mediaItemCount - 1)
         when {
-            c == shufHistory.getOrNull(shufPos) -> return                 // no real change
-            c == shufHistory.getOrNull(shufPos - 1) -> shufPos--          // Previous: walk back
-            else -> {                                                     // forward (chosen) or a tap
+            c == shufHistory.getOrNull(shufPos) -> return
+            c == shufHistory.getOrNull(shufPos - 1) -> shufPos--
+            else -> {
                 if (shufPos < shufHistory.size - 1) {
-                    shufHistory.subList(shufPos + 1, shufHistory.size).clear()  // drop the old forward path
+                    shufHistory.subList(shufPos + 1, shufHistory.size).clear()
                 }
                 // Jumping to an already-played song (queue-screen tap, repeat-list wrap) must
                 // MOVE it to the end of the path, not append a second copy — a duplicated
@@ -528,16 +477,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Rebuild ExoPlayer's shuffle order to encode the session:
-     * [played path up to current] + [enqueued] + [one chosen unplayed] + [other unplayed] +
-     * [discarded played].
-     * So Next/auto-advance go to the chosen unplayed, Previous returns the prior path song, and
-     * when nothing is unplayed the current song ends up last so Next stops.
-     *
-     * Manually enqueued songs ("play next") come first, in queue order, and only then does the
-     * random walk resume. Under shuffle their TIMELINE position means nothing — this order is
-     * what actually plays — so without this they would just be more songs in the random pool.
-     *
      * Note there is no special case for "everything has played": the prefix already ends with the
      * current song, so the general form places it last on its own. Re-shuffling here instead
      * threw the recorded play path away, and Previous during the last song of a completed pass

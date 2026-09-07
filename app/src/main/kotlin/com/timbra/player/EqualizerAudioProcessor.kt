@@ -18,8 +18,6 @@ import kotlin.math.sin
 class EqualizerAudioProcessor : BaseAudioProcessor() {
 
     /**
-     * An atomically-published snapshot of everything the audio thread needs.
-     *
      * [generation] identifies the transfer function: the audio thread drops its filter memory
      * whenever it changes, because feeding x1/x2/y1/y2 from one response into a different one
      * emits a step transient (a fader tap from +15 dB to -15 dB used to click, clipping against
@@ -29,16 +27,8 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     private class Tuning(
         val enabled: Boolean,
         val coeffs: Array<DoubleArray>,
-        /**
-         * Indices of the bands whose coeffs are NOT the identity, i.e. the only ones worth
-         * running. Identity biquads output their input exactly and carry no state worth
-         * preserving, so skipping them is lossless — and this loop runs per SAMPLE on the audio
-         * thread, where a typical 2-3-slider curve would otherwise pay for all 7 bands.
-         */
         val activeBands: IntArray,
         /**
-         * Input scale applied before the cascade, compensating the largest positive band gain.
-         *
          * The biquads can only ADD level and the only limiter downstream is the output clamp, so
          * a loud track with any boost clipped into audible distortion rather than simply getting
          * louder — and because the seven Q=1 bands sit ~1.4 octaves apart their responses overlap,
@@ -50,16 +40,13 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
 
     @Volatile private var tuning = Tuning(false, identityCoeffs(), IntArray(0), 1.0, 0)
 
-    /** Guards the rebuild inputs below and serializes publishing. */
     private val buildLock = Any()
 
-    // --- All guarded by [buildLock] ---
     private var enabledInput = false
     private var gainsInput = IntArray(EqSettings.BAND_COUNT)
     private var sampleRate = 0
     private var generation = 0
 
-    // --- Audio thread only ---
     private var channels = 0
     private var state: Array<DoubleArray> = emptyArray()
     private var appliedGeneration = 0
@@ -71,7 +58,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
-        // Only 16-bit PCM is supported; anything else bypasses (returns NOT_SET -> inactive).
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) return AudioFormat.NOT_SET
         channels = inputAudioFormat.channelCount
         state = Array(channels) { DoubleArray(EqSettings.BAND_COUNT * 4) }
@@ -94,7 +80,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         }
         val co = cfg.coeffs
         val active = cfg.activeBands
-        // Bypass: copy through unchanged when disabled or every band is flat (all identity).
         if (!cfg.enabled || active.isEmpty()) {
             out.put(inputBuffer)
             out.flip()
@@ -106,7 +91,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         out.order(ByteOrder.LITTLE_ENDIAN)
         val total = inShorts.remaining()
         var i = 0
-        var c = 0 // interleaved channel of sample i (a wrapping counter, not a per-sample modulo)
+        var c = 0
         while (i < total) {
             val st = state[c]
             var s = inShorts.get().toDouble() * preamp
@@ -115,8 +100,8 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
                 val bq = co[band]
                 val x = s
                 val y = bq[0] * x + bq[1] * st[k] + bq[2] * st[k + 1] - bq[3] * st[k + 2] - bq[4] * st[k + 3]
-                st[k + 1] = st[k]; st[k] = x          // x2 = x1; x1 = x
-                st[k + 3] = st[k + 2]; st[k + 2] = y  // y2 = y1; y1 = y
+                st[k + 1] = st[k]; st[k] = x
+                st[k + 3] = st[k + 2]; st[k + 2] = y
                 s = y
             }
             // ROUND, not truncate: `toInt()` rounds toward zero, which biases every sample
@@ -158,9 +143,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         const val Q = 1.0
 
         /**
-         * Whether a band does anything at [sampleRate] — the single definition of the passthrough
-         * case, used both to emit identity coefficients and to build the active-band list.
-         *
          * Bands at or above Nyquist are skipped: the RBJ formula is only valid for 0 < w0 < pi;
          * at or beyond it the poles leave the unit circle and the filter self-oscillates. 0 dB is
          * an exact passthrough, so it is skipped too.
@@ -171,7 +153,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         fun identityCoeffs(): Array<DoubleArray> =
             Array(EqSettings.BAND_COUNT) { doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0) }
 
-        /** RBJ cookbook peaking-EQ biquads, normalized so a0 = 1 (0 dB = exact passthrough). */
         fun buildCoeffs(gainsDb: IntArray, sampleRate: Int): Array<DoubleArray> =
             Array(EqSettings.BAND_COUNT) { band ->
                 val gain = gainsDb.getOrElse(band) { 0 }

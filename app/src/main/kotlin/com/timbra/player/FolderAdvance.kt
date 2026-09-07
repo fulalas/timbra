@@ -13,8 +13,6 @@ import com.timbra.repository
 import kotlinx.coroutines.sync.withLock
 
 /**
- * THE Advance-List folder move, for every trigger and every owner.
- *
  * It used to exist twice — richly in the UI (deck/phantom handling, folderContext, a generation
  * guard and a mutex) and as a cut-down copy in [PlaybackService] for the backgrounded case,
  * coordinated only by "is the UI attached". The copies had drifted on three axes: the service
@@ -22,9 +20,6 @@ import kotlinx.coroutines.sync.withLock
  * entered at index 0 and force-started playback (so there was no BACKWARD advance at all while
  * detached, and a stuck-track recovery could start audio on a player the user had paused), and
  * it bumped neither the generation nor the mutex the UI added to stop double jumps.
- *
- * Works on any [Player], which is what lets both owners share it: the service passes its
- * ExoPlayer, the UI its MediaController.
  */
 object FolderAdvance {
 
@@ -41,15 +36,11 @@ object FolderAdvance {
             if (expectedGen != session.queueGeneration) return@withLock null
             val current = player.currentMediaItem ?: return@withLock null
             val fallbackAnchor = current.pathExtra.substringBeforeLast('/', "")
-            // Prefer the folder a jump/advance last loaded; fall back to the playing file's own
-            // directory (always a song-folder entry) when it's absent or stale after a rescan.
             val (prev, next) = FolderTreeBuilder.neighbourFolders(
                 context.repository.songFolders(),
                 session.folderContext,
                 fallbackAnchor,
             )
-            // The traversal lookup suspended; re-check that nothing replaced the queue meanwhile
-            // and that the caller still wants this.
             if (expectedGen != session.queueGeneration || !stillWanted()) return@withLock null
             val target = (if (forward) next else prev) ?: return@withLock null
             val tracks = target.tracksInPlayOrder(context.folderSort.sortOrder)

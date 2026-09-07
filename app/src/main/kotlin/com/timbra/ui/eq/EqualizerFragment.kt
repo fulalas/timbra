@@ -36,7 +36,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
      */
     private lateinit var gains: IntArray
 
-    /** Suppresses persistence/apply while we set slider positions programmatically. */
     private var binding = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
@@ -68,12 +67,9 @@ class EqualizerFragment : Fragment(), MenuProvider {
                 override fun onStartTrackingTouch(sb: SeekBar) {}
                 override fun onStopTrackingTouch(sb: SeekBar) {}
             })
-            // The whole column is the touch target (generous tolerance): map touch Y -> progress.
             row.bandHolder.max = row.bandSeek.max
             row.bandHolder.onValue = { p -> row.bandSeek.progress = p }
             row.bandHolder.onRelease = { settings.setGains(gains) }
-            // Turn the horizontal SeekBar into a vertical fader: make it as long as its holder,
-            // then rotate -90° (max ends up at the top). Done post-layout so the height is known.
             row.bandHolder.doOnLayout { holder ->
                 row.bandSeek.layoutParams = row.bandSeek.layoutParams.also { it.width = holder.height }
                 row.bandSeek.rotation = -90f
@@ -117,7 +113,7 @@ class EqualizerFragment : Fragment(), MenuProvider {
         gains = IntArray(EqSettings.BAND_COUNT)
         binding = true
         rows.forEach {
-            it.bandSeek.progress = -EqSettings.MIN_GAIN_DB   // 0 dB -> center
+            it.bandSeek.progress = -EqSettings.MIN_GAIN_DB
             it.bandGain.text = gainLabel(0)
         }
         binding = false

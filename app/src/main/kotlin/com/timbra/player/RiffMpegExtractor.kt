@@ -12,10 +12,6 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.mp3.Mp3Extractor
 
 /**
- * Extractor for MPEG audio wrapped in a RIFF/WAVE container — `fmt ` format tag 0x0055
- * (`WAVE_FORMAT_MPEGLAYER3`) or 0x0050 (`WAVE_FORMAT_MPEG`). Old rips and CD-ripper output
- * do this, and the files are normally named `.mp3` with MediaStore reporting `audio/mpeg`.
- *
  * Media3 can't play them: sniffing stops at the first extractor that claims the stream, and
  * `WavExtractor` claims anything with the RIFF/WAVE magic — only to throw
  * `Unsupported WAV format type: 85` once it reads the format tag. The track dies with a
@@ -23,8 +19,7 @@ import androidx.media3.extractor.mp3.Mp3Extractor
  *
  * So this sniffs the narrower case (RIFF/WAVE *carrying MPEG*) and is registered ahead of
  * the defaults (see [TimbraExtractorsFactory]) to win that race. Real PCM/ADPCM WAVs fail
- * the format-tag check and fall through to `WavExtractor` as before. Demuxing itself is
- * delegated to [Mp3Extractor] after the container header is skipped.
+ * the format-tag check and fall through to `WavExtractor` as before.
  */
 @UnstableApi
 class RiffMpegExtractor : Extractor {
@@ -68,9 +63,6 @@ class RiffMpegExtractor : Extractor {
     }
 
     override fun seek(position: Long, timeUs: Long) {
-        // The delegate seeks to absolute file offsets it derived from the first frame, so those
-        // are already inside the payload; only a rewind to the very start needs the header
-        // skipped again.
         atPayload = dataStart in 1..position
         delegate.seek(position, timeUs)
     }
@@ -83,7 +75,7 @@ class RiffMpegExtractor : Extractor {
         // about its size) raised EOFException out of read(), media3 wrapped it as a source error
         // and the track died: exactly the failure this extractor exists to prevent, just moved
         // here from WavExtractor. Returning false ends the stream cleanly instead.
-        if (!input.skipFully(12, true)) return false // "RIFF" + size + "WAVE"
+        if (!input.skipFully(12, true)) return false
         val chunk = ByteArray(8)
         var seen = 0
         while (seen++ < MAX_CHUNKS) {
@@ -123,10 +115,6 @@ class RiffMpegExtractor : Extractor {
     }
 }
 
-/**
- * The default extractors, preceded by [RiffMpegExtractor] so RIFF-wrapped MPEG is claimed
- * before `WavExtractor` can fail on it.
- */
 @UnstableApi
 class TimbraExtractorsFactory : ExtractorsFactory {
 

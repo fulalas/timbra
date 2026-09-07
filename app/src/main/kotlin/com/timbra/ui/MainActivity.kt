@@ -13,7 +13,6 @@ import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -145,10 +144,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Backstop for library changes this process didn't witness — see
-        // TimbraApp.refreshLibraryIfChanged. It only re-queries the library when MediaStore's own
-        // marker has moved, which is what makes it affordable on every foreground return.
-        //
         // Gated on the permission, and not only as an optimisation: below API 29 MediaProvider
         // declares android:readPermission, so querying it before the grant throws SecurityException
         // — and onCreate merely QUEUES the request, so on a first run onStart gets here first. The
@@ -164,7 +159,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val byId = repository.allTracks().associateBy { it.id }
             val enqSet = saved.enqueuedIndices.toSet()
-            val kept = ArrayList<Int>(saved.trackIds.size) // surviving SAVED indices, in order
+            val kept = ArrayList<Int>(saved.trackIds.size)
             val tracks = ArrayList<Track>(saved.trackIds.size)
             val enqueuedFlags = ArrayList<Boolean>(saved.trackIds.size)
             saved.trackIds.forEachIndexed { i, id ->
@@ -184,7 +179,6 @@ class MainActivity : AppCompatActivity() {
                 val d = abs(savedIndex - saved.index)
                 if (d < bestDistance) { bestDistance = d; index = newIndex }
             }
-            // The position only means anything for the song it was taken from.
             val positionMs = if (kept.getOrNull(index) == saved.index) saved.positionMs else 0L
             // The shuffle session is recorded as positions in the SAVED queue, so it has to travel
             // through the same surviving-index map as everything else here.
@@ -239,13 +233,17 @@ class MainActivity : AppCompatActivity() {
         app.refreshLibrary()
         lifecycleScope.launch {
             val n = repository.allTracks().size
-            Toast.makeText(
-                this@MainActivity,
-                resources.getQuantityString(R.plurals.rescan_done, n, n),
-                Toast.LENGTH_SHORT,
-            ).show()
+            showPopup(resources.getQuantityString(R.plurals.rescan_done, n, n))
         }
     }
+
+    /**
+     * Announce something in the app's own overlay, NOT a Toast: the system queues toasts and
+     * plays each one for its full duration, so messages fired in quick succession lag behind
+     * the action that caused them (and Android 12+ rate-limits them away entirely).
+     */
+    fun showPopup(msg: String, durationMs: Long = Popup.SHORT_MS) =
+        Popup.show(binding.appPopup, msg, durationMs)
 
     fun openPlayer() = navController.navigate(R.id.playerFragment, null, playerNavOptions)
 
@@ -306,7 +304,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** The Toolbar's internal title TextView (no public accessor; matched by its text). */
     private fun toolbarTitleView(): TextView? {
         for (i in 0 until binding.toolbar.childCount) {
             val v = binding.toolbar.getChildAt(i)
@@ -367,11 +364,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 app.refreshLibrary()
                 if (failed > 0) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.delete_failed, failed),
-                        Toast.LENGTH_LONG,
-                    ).show()
+                    showPopup(getString(R.string.delete_failed, failed), Popup.LONG_MS)
                 }
             }
         }
@@ -383,10 +376,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSupportNavigateUp(): Boolean {
-        // The player's back ARROW is NOT history navigation: it always opens the folder
-        // the playing song lives in, with its ancestors stacked beneath — so repeated
-        // taps walk UP the tree (album → ... → main folder → Library). Only the arrow:
-        // the system back gesture still returns to wherever the player was opened from.
         if (navController.currentDestination?.id == R.id.playerFragment) {
             val dir = player.state.value.filePath.substringBeforeLast('/', "")
             if (dir.isNotEmpty()) {
@@ -419,16 +408,14 @@ class MainActivity : AppCompatActivity() {
         lastPlayback = s
         updateMiniVisibility()
         if (!s.hasItem) { miniArtMediaId = Long.MIN_VALUE; return }
-        // Most emissions are 500ms position ticks; touch only the views whose source changed.
-        // A bind after the no-item state re-sets everything.
         val fresh = prev == null || !prev.hasItem
         if (fresh || s.title != prev.title || s.filePath != prev.filePath || s.artist != prev.artist) {
             miniTitle.text = s.displayTitle
             miniSubtitle.text = s.artist
         }
         miniTransport.bind(s, prev?.takeIf { it.hasItem })
-        // Only (re)load the cover when the track actually changes, otherwise it flickers
-        // on every 500ms position tick. No art → no thumbnail (no generic placeholder).
+        // Only (re)load the cover when the track actually changes, otherwise it flickers on
+        // every 500ms position tick.
         if (s.mediaId != miniArtMediaId) {
             miniArtMediaId = s.mediaId
             // Load via the track's content Uri so embedded-only covers are found too (and keyed
@@ -490,7 +477,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private companion object {
-        /** Compiled once: [friendlyPath] runs on every navigation and every song change. */
         val STORAGE_EMULATED = Regex("^/storage/emulated/\\d+/?")
         val STORAGE_VOLUME = Regex("^/storage/[^/]+/?")
     }

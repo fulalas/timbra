@@ -4,7 +4,6 @@ package com.timbra.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.timbra.R
 import com.timbra.data.MediaRepository
@@ -82,11 +81,8 @@ object ItemActions {
             if (tracks.size == 1) it.displayTitle
             else fragment.resources.getQuantityString(R.plurals.n_songs, tracks.size, tracks.size)
         } ?: return
-        Toast.makeText(
-            fragment.requireContext(),
-            fragment.getString(R.string.enqueued, label),
-            Toast.LENGTH_SHORT,
-        ).show()
+        (fragment.requireActivity() as? MainActivity)
+            ?.showPopup(fragment.getString(R.string.enqueued, label))
     }
 
     private fun showInfo(fragment: Fragment, tracks: List<Track>) {

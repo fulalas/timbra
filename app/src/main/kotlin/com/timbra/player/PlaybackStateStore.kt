@@ -5,8 +5,6 @@ import android.content.Context
 import androidx.media3.common.Player
 
 /**
- * Order-sensitive hash of a queue's media ids.
- *
  * The saved shuffle session is a list of TIMELINE INDICES, so it means nothing against any other
  * queue — and the session and the id list have two different writers (the service owns the
  * session, [PlayerConnection] the queue), so a process death between their two transactions can
@@ -36,9 +34,6 @@ class PlaybackStateStore(context: Context) {
     )
 
     /**
-     * The queue only changes when the timeline changes — write the (potentially large) id list
-     * rarely.
-     *
      * The index and position go in the SAME transaction, because they only mean anything
      * relative to this id list: they used to be written by a different event, so a timeline
      * rebuild that fired only EVENT_TIMELINE_CHANGED (turning shuffle off, say) left the saved
@@ -55,10 +50,6 @@ class PlaybackStateStore(context: Context) {
     }
 
     /**
-     * Bumps [modesRevision] so a reader can tell "nobody has touched these since I last wrote
-     * them" from "someone else did" — the detached service narrows Shuffle-All when it advances
-     * a folder, and a retained PlayerConnection has to notice.
-     *
      * Synchronized because the bump is a read-modify-write and there are two writers by design:
      * [PlayerConnection] on the main thread and the service's detached folder advance. Two
      * interleaved calls would otherwise both read N and write N+1, losing an increment — and a
@@ -80,10 +71,6 @@ class PlaybackStateStore(context: Context) {
      * user is halfway through. Without it Next handed out songs already heard, and — because
      * Advance-List only rolls into the next folder when the queue actually ENDS — a folder could
      * repeat forever instead of advancing.
-     *
-     * [played] is a superset of [history]: the path drops entries the user branched away from,
-     * but they stay played. The current position within the path isn't stored — the path holds
-     * each index at most once, so the playing song locates itself in it.
      */
     fun saveShuffleSession(history: List<Int>, played: Set<Int>, fingerprint: Int) {
         prefs.edit()
@@ -166,12 +153,9 @@ class PlaybackStateStore(context: Context) {
             ?: emptyList()
 
     /**
-     * The persisted play modes — read independently of the saved queue, so a live-session
-     * reconnect can re-adopt them even when the queue itself isn't (re)loaded from disk.
-     *
      * Stored by NAME (see [enumByName]). The legacy ordinal keys are still read when no name is
      * present, so an in-place update keeps the user's modes instead of silently resetting
-     * Advance-List to OFF. Defaults to OFF for both.
+     * Advance-List to OFF.
      */
     fun loadModes(): Pair<ShuffleMode, RepeatMode> {
         val shuffle = prefs.getString(KEY_SHUFFLE, null)
@@ -193,11 +177,9 @@ class PlaybackStateStore(context: Context) {
         const val KEY_SHUF_PLAYED = "shuffle_played"
         const val KEY_SHUF_FP = "shuffle_queue_fp"
 
-        // Names, written since 0.8.0.
         const val KEY_SHUFFLE = "shuffle_name"
         const val KEY_REPEAT = "repeat_name"
 
-        // Ordinals, written before 0.8.0 — read once, to migrate an existing install.
         const val KEY_SHUFFLE_LEGACY = "shuffle"
         const val KEY_REPEAT_LEGACY = "repeat"
     }

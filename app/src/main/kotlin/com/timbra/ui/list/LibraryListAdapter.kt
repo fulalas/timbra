@@ -32,8 +32,6 @@ sealed interface ListItem {
 }
 
 /**
- * The shared browse-list adapter.
- *
  * Backed by [ListAdapter]/[DiffUtil] rather than `notifyDataSetChanged()`: submit() is called on
  * every debounced keystroke in Search and on every sort/View-As change and rescan elsewhere, and a
  * blanket invalidation rebound every visible row from scratch — three setText, a duration format,
@@ -53,7 +51,6 @@ class LibraryListAdapter(
             if (field == value) return
             val old = field
             field = value
-            // Only the previously- and newly-highlighted rows need rebinding.
             notifyTrackChanged(old)
             notifyTrackChanged(value)
         }
@@ -97,11 +94,8 @@ class LibraryListAdapter(
             applyNowPlaying(b.root, b.title, playing)
             // isInvisible, not isVisible: GONE removed the bar's 2dp from the layout, so the
             // playing row was taller than its neighbours and the whole list shifted by 2dp on
-            // every track change. Keeping the slot reserved is the same trick row_queue uses to
-            // keep its art column aligned.
+            // every track change.
             b.nowPlayingBar.isInvisible = !playing
-            // No generic placeholder for art-less rows — but keep the slot (INVISIBLE, not
-            // GONE) so every row's text stays aligned in a mixed list.
             ArtLoader.load(b.thumb, owner, t.uri, t.albumId) { b.thumb.isInvisible = !it }
             b.root.setOnClickListener { onTrack(item.indexInList) }
             b.root.setOnLongClickListener { onLongItem(item); true }

@@ -74,7 +74,6 @@ class FolderTreeBuilderTest {
 
     @Test fun `neighbourFolders tries the anchors in priority order`() {
         val folders = FolderTreeBuilder.songFolders(library())
-        // A stale first anchor (e.g. a folderContext gone after a rescan) falls through to the next.
         val (prev, next) = FolderTreeBuilder.neighbourFolders(folders, "$music/Gone", "$music/Jazz/Live")
         assertEquals("Jazz", prev?.name)
         assertEquals("Rock", next?.name)

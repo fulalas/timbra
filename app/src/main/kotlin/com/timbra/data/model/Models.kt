@@ -19,7 +19,7 @@ data class Track(
      * Derived once at construction, NOT a computed getter: the filename comparator selects on
      * it and `compareBy` evaluates the selector on both operands of every comparison, so a
      * getter allocated a fresh substring O(n log n) times per sort (on the main thread for
-     * folder advances). Defaulted from [path], so callers never pass it.
+     * folder advances).
      */
     val fileName: String = path.substringAfterLast('/'),
 ) {

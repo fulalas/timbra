@@ -12,8 +12,6 @@ inline fun <reified T : Enum<T>> T.cycleNext(): T {
 }
 
 /**
- * Resolve a PERSISTED enum by name, falling back to [default] for a missing/unknown one.
- *
  * Names, not ordinals: an ordinal is positional, so inserting or reordering an entry silently
  * reinterprets an already-stored value as a different mode — and an `entries.getOrElse` guard
  * cannot notice, because the stale ordinal is still in range.
@@ -32,12 +30,6 @@ enum class ShuffleMode(
 
     val playerShuffleEnabled: Boolean get() = this != OFF
 
-    /**
-     * The mode a folder advance leaves behind: Shuffle-All's pool was the whole library, but
-     * after the advance it is this ONE folder — which is exactly what Shuffle-Songs means, so
-     * the icon would otherwise lie about the pool. Owned here because both the attached advance
-     * (MainActivity) and the detached one (PlaybackService) have to apply the same rule.
-     */
     fun narrowedToFolder(): ShuffleMode = if (this == ALL) CURRENT else this
 }
 
