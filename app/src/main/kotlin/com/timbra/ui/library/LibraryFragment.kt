@@ -87,9 +87,9 @@ class LibraryFragment : Fragment(), MenuProvider {
     private fun showAbout() {
         val body = getString(
             R.string.about_body,
-            BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.APPLICATION_ID,
+            BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, getString(R.string.app_name),
         )
-        Dialogs.message(requireContext(), R.string.app_name, body)
+        Dialogs.message(requireContext(), R.string.app_name, body, linkify = true)
     }
 
     override fun onDestroyView() {

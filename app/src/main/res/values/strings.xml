@@ -91,7 +91,7 @@
     <string name="search_play_folder">Its folder</string>
 
     <string name="menu_about">About</string>
-    <string name="about_body">Version %1$s (build %2$d)\nPackage: %3$s\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\n• Audio engine: Media3 / ExoPlayer with FFmpeg decoders (wide format support, all ABIs incl. arm64)\n• Folder-hierarchy browsing, full library, gapless playback, background playback\n\nBuilt with Kotlin.\n\nFree software under the GNU General Public License v3.0 or later. Bundled libraries keep their own licenses (Apache-2.0; FFmpeg under LGPL/GPL).</string>
+    <string name="about_body">Version %1$s (build %2$d)\n\nA modern, from-scratch re-implementation of the classic Poweramp UI/UX.\n\nhttps://github.com/fulalas/timbra\n\nPlease consider donating to the %3$s project:\n\nhttps://paypal.me/fulalas\n\nFree software under the GNU General Public License v3.0 or later.</string>
     <string name="cd_album_art">Album art</string>
 
     <string name="unknown_artist">Unknown artist</string>

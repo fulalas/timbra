@@ -2,6 +2,8 @@
 package com.timbra.ui.dialogs
 
 import android.content.Context
+import android.text.util.Linkify
+import android.widget.TextView
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import com.timbra.R
@@ -50,12 +52,23 @@ object Dialogs {
             .show()
     }
 
-    fun message(context: Context, @StringRes titleRes: Int, body: String) {
-        AlertDialog.Builder(context)
+    fun message(
+        context: Context,
+        @StringRes titleRes: Int,
+        body: String,
+        linkify: Boolean = false,
+    ) {
+        val dialog = AlertDialog.Builder(context)
             .setTitle(titleRes)
             .setMessage(body)
             .setPositiveButton(android.R.string.ok, null)
             .show()
+        // After show(): the message TextView doesn't exist until the dialog is created, and
+        // addLinks is also what installs the movement method that makes the links tappable.
+        if (linkify) {
+            dialog.findViewById<TextView>(android.R.id.message)
+                ?.let { Linkify.addLinks(it, Linkify.WEB_URLS) }
+        }
     }
 
     fun actions(context: Context, title: String, options: Array<String>, onPick: (Int) -> Unit) {
