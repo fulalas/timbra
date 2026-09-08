@@ -114,6 +114,6 @@ chosen deliberately: Apache-2.0 is one-way compatible with GPLv3 but **not** wit
 
 ## Donate
 
-Please consider donating to the UniChat project:
+Please consider donating to the Timbra project:
 
 [https://paypal.me/fulalas](https://paypal.me/fulalas)
