@@ -111,3 +111,9 @@ It bundles third-party components under their own licenses — Apache-2.0 for th
 Media3/ExoPlayer, Material Components, Guava and kotlinx-coroutines libraries; and FFmpeg
 (via [nextlib](https://github.com/anilbeesetti/nextlib)) under the LGPL/GPL. GPLv3 was
 chosen deliberately: Apache-2.0 is one-way compatible with GPLv3 but **not** with GPLv2.
+
+## Donate
+
+Please consider donating to the UniChat project:
+
+[https://paypal.me/fulalas](https://paypal.me/fulalas)
