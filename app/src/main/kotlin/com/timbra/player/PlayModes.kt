@@ -11,11 +11,6 @@ inline fun <reified T : Enum<T>> T.cycleNext(): T {
     return all[(ordinal + 1) % all.size]
 }
 
-/**
- * Names, not ordinals: an ordinal is positional, so inserting or reordering an entry silently
- * reinterprets an already-stored value as a different mode — and an `entries.getOrElse` guard
- * cannot notice, because the stale ordinal is still in range.
- */
 inline fun <reified T : Enum<T>> enumByName(name: String?, default: T): T =
     if (name == null) default else enumValues<T>().firstOrNull { it.name == name } ?: default
 

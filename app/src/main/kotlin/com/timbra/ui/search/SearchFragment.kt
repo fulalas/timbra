@@ -41,9 +41,6 @@ class SearchFragment : Fragment() {
     private var results: List<Track> = emptyList()
     private var searchJob: Job? = null
 
-    // One-shot listener that waits for window focus before showing the keyboard; tracked
-    // (with the exact observer it was added to) so it can be removed even if the view is
-    // destroyed before it ever fires — otherwise it leaks the fragment on the window observer.
     private var imeFocusObserver: ViewTreeObserver? = null
     private var imeFocusListener: ViewTreeObserver.OnWindowFocusChangeListener? = null
 
@@ -67,10 +64,6 @@ class SearchFragment : Fragment() {
 
         b.searchInput.addTextChangedListener { onQuery(it?.toString().orEmpty()) }
         b.searchInput.setOnEditorActionListener { _, _, _ -> hideKeyboard(); true }
-        // Pop the keyboard as soon as Search opens so the user can type straight away. Posted so
-        // it runs after the view is attached. Search is reached from the overflow menu, whose
-        // popup holds window focus; until the activity window gets it back, showSoftInput is
-        // silently dropped — so show now if we already have window focus, else wait for it.
         b.searchInput.post {
             val bb = _b ?: return@post
             if (bb.searchInput.hasWindowFocus()) {
@@ -120,8 +113,6 @@ class SearchFragment : Fragment() {
     }
 
     private fun promptPlay(index: Int) {
-        // Snapshot the tapped list: a debounced search can replace `results` while this dialog
-        // is open, so both actions must act on what the user actually tapped, not the live list.
         val snapshot = results
         val track = snapshot.getOrNull(index) ?: return
         Dialogs.actions(
@@ -163,11 +154,6 @@ class SearchFragment : Fragment() {
         }
     }
 
-    /**
-     * Explicit show (flag 0), NOT SHOW_IMPLICIT: the framework drops an implicit request when
-     * it thinks a hardware keyboard is present (e.g. a GSI's virtual input device), so the
-     * keyboard never appears.
-     */
     private fun showKeyboard() {
         val et = _b?.searchInput ?: return
         et.requestFocus()

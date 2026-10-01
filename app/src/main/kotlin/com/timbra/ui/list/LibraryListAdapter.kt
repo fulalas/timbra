@@ -31,13 +31,6 @@ sealed interface ListItem {
     ) : ListItem
 }
 
-/**
- * Backed by [ListAdapter]/[DiffUtil] rather than `notifyDataSetChanged()`: submit() is called on
- * every debounced keystroke in Search and on every sort/View-As change and rescan elsewhere, and a
- * blanket invalidation rebound every visible row from scratch — three setText, a duration format,
- * a subtitle join, an art load and two fresh listeners each — and dropped the scroll position even
- * when most of the list was unchanged. [ListItem] is a data-class hierarchy, so equality is free.
- */
 class LibraryListAdapter(
     private val owner: LifecycleOwner,
     private val onTrack: (Int) -> Unit,
@@ -92,9 +85,6 @@ class LibraryListAdapter(
             b.subtitle.text = subtitleFor(b, t)
             b.duration.text = Format.clock(t.durationMs)
             applyNowPlaying(b.root, b.title, playing)
-            // isInvisible, not isVisible: GONE removed the bar's 2dp from the layout, so the
-            // playing row was taller than its neighbours and the whole list shifted by 2dp on
-            // every track change.
             b.nowPlayingBar.isInvisible = !playing
             ArtLoader.load(b.thumb, owner, t.uri, t.albumId) { b.thumb.isInvisible = !it }
             b.root.setOnClickListener { onTrack(item.indexInList) }
@@ -119,9 +109,6 @@ class LibraryListAdapter(
             b.title.text = item.title
             b.subtitle.text = item.subtitle
             b.root.setOnClickListener { onNav(item) }
-            // RowVH is shared with FolderRow, which DOES install one — a holder recycled from a
-            // folder row would otherwise keep the previous folder's handler and open its action
-            // menu on a long press here.
             b.root.setOnLongClickListener(null)
         }
     }

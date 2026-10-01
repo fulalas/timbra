@@ -63,8 +63,6 @@ object Dialogs {
             .setMessage(body)
             .setPositiveButton(android.R.string.ok, null)
             .show()
-        // After show(): the message TextView doesn't exist until the dialog is created, and
-        // addLinks is also what installs the movement method that makes the links tappable.
         if (linkify) {
             dialog.findViewById<TextView>(android.R.id.message)
                 ?.let { Linkify.addLinks(it, Linkify.WEB_URLS) }

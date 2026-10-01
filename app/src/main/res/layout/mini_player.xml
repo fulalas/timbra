@@ -89,7 +89,6 @@
         android:thumb="@null"
         android:splitTrack="false" />
 
-    <!-- Keeps the seekbar out of the bottom system-gesture zone. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

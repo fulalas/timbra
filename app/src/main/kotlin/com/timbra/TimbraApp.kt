@@ -47,9 +47,6 @@ class TimbraApp : Application() {
 
     private var seenFingerprint: String? = null
 
-    /** Serialises the two writers of [seenFingerprint] — the foreground probe and the
-     *  post-refresh re-baseline — and makes each measure-compare-adopt one atomic step, so a
-     *  slow measurement can never land on top of a newer one. */
     private val fingerprintLock = Mutex()
 
     private val audioObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -58,19 +55,11 @@ class TimbraApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Watched for the whole process life, never unregistered: songs copied to the device while
-        // the app sits in the background must invalidate the caches too, or coming back shows the
-        // library from before the copy. notifyForDescendants, because a per-file insert notifies
-        // that row's item Uri, not the collection's.
         contentResolver.registerContentObserver(
             MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, audioObserver,
         )
     }
 
-    /**
-     * Never hold off longer than [MAX_WAIT_MS] past the first signal: a few hundred files keep
-     * signalling for minutes, and the list has to update WHILE the copy runs, not only after.
-     */
     private fun onMediaStoreChanged() {
         val now = SystemClock.uptimeMillis()
         if (refreshJob?.isActive != true) burstStartedAt = now
@@ -78,7 +67,6 @@ class TimbraApp : Application() {
         refreshJob?.cancel()
         refreshJob = appScope.launch {
             delay(wait)
-            // NOT refreshLibrary(): that cancels refreshJob, which is this very coroutine.
             doRefreshLibrary()
         }
     }
@@ -90,20 +78,10 @@ class TimbraApp : Application() {
         moved
     }
 
-    /**
-     * Refreshing blindly on every foreground return would re-query the library and re-decode
-     * every cover on every app switch, which is exactly what the epoch guard in
-     * `reloadOnLibraryChange` exists to avoid.
-     */
     suspend fun refreshLibraryIfChanged() {
         if (adoptFingerprint()) refreshLibrary()
     }
 
-    /**
-     * Supersedes any pending debounced refresh: MediaProvider notifies the
-     * ACTING app's observers too, so a delete or a manual rescan would otherwise be followed by a
-     * duplicate full refresh — another whole-library re-query and art evictAll — a second later.
-     */
     fun refreshLibrary() {
         refreshJob?.cancel()
         doRefreshLibrary()
@@ -112,16 +90,7 @@ class TimbraApp : Application() {
     private fun doRefreshLibrary() {
         repository.invalidate()
         ArtLoader.invalidate()
-        // Re-baseline, because the caches are about to be rebuilt from MediaStore as of NOW and
-        // that is what the next probe must compare against. Leaving the marker stale would make
-        // that probe refresh a second time for a change already picked up; clearing it to null
-        // would be worse — the probe would adopt the NEXT change as its baseline WITHOUT
-        // refreshing, and the library would sit stale until the change after that.
         appScope.launch { adoptFingerprint() }
-        // update {}, not `value += 1`: the latter is a read-modify-write, so two overlapping
-        // refreshes (a permission grant and a rescan signal landing together) could collapse into
-        // one increment — and since every screen's reload is gated on the epoch CHANGING, the
-        // second refresh would be silently dropped and the list left stale.
         libraryEpoch.update { it + 1 }
     }
 

@@ -11,16 +11,6 @@ import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.mp3.Mp3Extractor
 
-/**
- * Media3 can't play them: sniffing stops at the first extractor that claims the stream, and
- * `WavExtractor` claims anything with the RIFF/WAVE magic — only to throw
- * `Unsupported WAV format type: 85` once it reads the format tag. The track dies with a
- * source error and `Mp3Extractor`, which would have handled the payload fine, never runs.
- *
- * So this sniffs the narrower case (RIFF/WAVE *carrying MPEG*) and is registered ahead of
- * the defaults (see [TimbraExtractorsFactory]) to win that race. Real PCM/ADPCM WAVs fail
- * the format-tag check and fall through to `WavExtractor` as before.
- */
 @UnstableApi
 class RiffMpegExtractor : Extractor {
 
@@ -32,10 +22,8 @@ class RiffMpegExtractor : Extractor {
 
     override fun sniff(input: ExtractorInput): Boolean {
         val riff = ByteArray(12)
-        if (!input.peekFully(riff, 0, 12, /* allowEndOfInput= */ true)) return false
+        if (!input.peekFully(riff, 0, 12, true)) return false
         if (!riff.hasFourCc(0, "RIFF") || !riff.hasFourCc(8, "WAVE")) return false
-        // Walk the chunk list to `fmt `: it is usually first, but JUNK/bext padding can precede
-        // it, and its own size varies (30 or 32 bytes for MPEG), so a fixed offset won't do.
         val chunk = ByteArray(8)
         var seen = 0
         while (seen++ < MAX_CHUNKS) {
@@ -70,11 +58,6 @@ class RiffMpegExtractor : Extractor {
     override fun release() = delegate.release()
 
     private fun skipToPayload(input: ExtractorInput): Boolean {
-        // allowEndOfInput on EVERY read and skip. The header read below already did this, but the
-        // two skips used the throwing overload — so a truncated file (or a chunk header lying
-        // about its size) raised EOFException out of read(), media3 wrapped it as a source error
-        // and the track died: exactly the failure this extractor exists to prevent, just moved
-        // here from WavExtractor. Returning false ends the stream cleanly instead.
         if (!input.skipFully(12, true)) return false
         val chunk = ByteArray(8)
         var seen = 0
@@ -100,9 +83,6 @@ class RiffMpegExtractor : Extractor {
     private fun ByteArray.le32(offset: Int): Int =
         le16(offset) or (le16(offset + 2) shl 16)
 
-    /** RIFF chunk bodies are word-aligned: an odd size is followed by one pad byte. Saturating,
-     *  because a corrupt size of exactly [Int.MAX_VALUE] would otherwise overflow to
-     *  [Int.MIN_VALUE] and hand a negative skip to the extractor input. */
     private fun Int.padded(): Int =
         if (this >= Int.MAX_VALUE - 1) Int.MAX_VALUE - 1 else this + (this and 1)
 
@@ -110,7 +90,6 @@ class RiffMpegExtractor : Extractor {
         const val FORMAT_MPEG = 0x0050
         const val FORMAT_MPEGLAYER3 = 0x0055
 
-        /** Bound on the chunk walk, so a corrupt size field can't spin. */
         const val MAX_CHUNKS = 16
     }
 }

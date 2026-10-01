@@ -29,11 +29,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
 
     private var rows: List<ItemEqBandBinding> = emptyList()
 
-    /**
-     * The live band gains. The screen works from memory while a fader is dragged — every
-     * step used to re-parse and re-write the persisted string twice — and persists once on
-     * release (see [VerticalFader.onRelease]) and on reset.
-     */
     private lateinit var gains: IntArray
 
     private var binding = false
@@ -53,7 +48,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
             val row = ItemEqBandBinding.inflate(inflater, b.bands, true)
             row.bandFreq.text = freqLabel(EqSettings.BAND_FREQS[i])
             row.bandSeek.max = EqSettings.MAX_GAIN_DB - EqSettings.MIN_GAIN_DB
-            // Set position BEFORE attaching the listener so this initial set doesn't write back.
             row.bandSeek.progress = gains[i] - EqSettings.MIN_GAIN_DB
             row.bandGain.text = gainLabel(gains[i])
             row.bandSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -126,9 +120,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
         b.bands.alpha = if (enabled) 1f else 0.4f
         rows.forEach {
             it.bandHolder.isEnabled = enabled
-            // Also disable the underlying SeekBar: when a fader stops intercepting (disabled),
-            // the still-enabled child SeekBar would otherwise keep receiving touches on its
-            // thumb strip.
             it.bandSeek.isEnabled = enabled
         }
     }
@@ -143,8 +134,6 @@ class EqualizerFragment : Fragment(), MenuProvider {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        // Defensive: a drag interrupted by navigation would otherwise lose its last steps
-        // (gains normally persist on fader release).
         if (::gains.isInitialized) settings.setGains(gains)
         rows = emptyList()
         _b = null

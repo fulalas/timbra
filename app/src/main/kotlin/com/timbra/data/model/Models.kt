@@ -15,12 +15,6 @@ data class Track(
     val discNo: Int,
     val dateAddedSec: Long,
     val path: String,
-    /**
-     * Derived once at construction, NOT a computed getter: the filename comparator selects on
-     * it and `compareBy` evaluates the selector on both operands of every comparison, so a
-     * getter allocated a fresh substring O(n log n) times per sort (on the main thread for
-     * folder advances).
-     */
     val fileName: String = path.substringAfterLast('/'),
 ) {
     val displayTitle: String get() = title.ifBlank { fileName }

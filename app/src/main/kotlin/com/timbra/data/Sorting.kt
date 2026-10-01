@@ -30,12 +30,7 @@ object SortDefaults {
 fun comparatorFor(order: SortOrder): Comparator<Track> {
     val primary: Comparator<Track> = when (order) {
         SortOrder.FILENAME -> compareBy(NATURAL) { it.fileName }
-        // displayTitle, not title: the lists render `title.ifBlank { fileName }`, so ordering on
-        // the raw tag put every untagged track in one block under the empty string — an order that
-        // matched nothing the user could see.
         SortOrder.TITLE -> compareBy(NATURAL) { it.displayTitle }
-        // Disc first: MediaStore encodes disc*1000 + track, so without it a 2-disc album
-        // interleaves (disc1/t1, disc2/t1, disc1/t2, ...) once the disc is split off.
         SortOrder.TRACK_NO -> compareBy<Track> { it.discOrFirst }
             .thenBy { it.trackNo }.thenBy(NATURAL) { it.displayTitle }
         SortOrder.ALBUM -> compareBy<Track, String>(NATURAL) { it.album }
@@ -45,12 +40,6 @@ fun comparatorFor(order: SortOrder): Comparator<Track> {
         SortOrder.DATE -> compareByDescending { it.dateAddedSec }
         SortOrder.DURATION -> compareBy { it.durationMs }
     }
-    // EVERY order ends with the same total tiebreak. A tie left the result depending on the order
-    // of the INPUT list (sortedWith is stable), which contradicts this file's contract that every
-    // folder entry point yields the identical queue — and ties are the norm, not the exception:
-    // dateAddedSec has one-second resolution so a bulk copy ties outright, durations collide
-    // freely, and titles, albums and artists all repeat. fileName then the unique track id makes
-    // all seven orders deterministic.
     return primary.thenBy(NATURAL) { it.fileName }.thenBy { it.id }
 }
 
@@ -69,9 +58,6 @@ private fun naturalCompare(a: String, b: String): Int {
         val ca = a[i]
         val cb = b[j]
         if (ca.isDigit() && cb.isDigit()) {
-            // Filenames are overwhelmingly "01 Title", so this branch runs on nearly every
-            // comparison; the substring+trimStart form allocated two to four short-lived strings
-            // each time, on a comparator that runs on the main thread during folder advances.
             while (i < a.length && a[i] == '0') i++
             while (j < b.length && b[j] == '0') j++
             var endA = i

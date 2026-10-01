@@ -14,13 +14,6 @@ class TitleMarquee(private val tv: TextView) {
 
     private var text: String = ""
 
-    /**
-     * Bumped by every [set]/[scrollOnce]/[stop]. [scrollOnce] defers all its work into a
-     * `doOnLayout` block that cannot be un-registered, so without this a run started for one
-     * screen fired AFTER [stop] and overwrote the (SHARED, in the toolbar's case) TextView with
-     * the previous screen's doubled title — which then kept scrolling, since the runnable's own
-     * guards were both satisfied.
-     */
     private var epoch = 0
 
     fun set(value: String) {
@@ -39,14 +32,9 @@ class TitleMarquee(private val tv: TextView) {
     fun scrollOnce() {
         scroll = null
         val startedAt = ++epoch
-        // Re-apply the state a scroll needs rather than assuming [set] left it in place: [stop]
-        // deliberately undoes both, and this is the tap-to-replay entry point — MainActivity wires
-        // it to a persistent click listener on the SHARED toolbar title view, so a tap arriving
-        // after a stop was scrolling a layout clipped to the viewport and end-ellipsized, and
-        // nothing visibly moved.
         tv.ellipsize = null
         tv.setHorizontallyScrolling(true)
-        tv.text = text // reset in case a prior interrupted run left it doubled
+        tv.text = text
         tv.scrollTo(0, 0)
         tv.doOnLayout {
             if (epoch != startedAt) return@doOnLayout

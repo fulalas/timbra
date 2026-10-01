@@ -128,16 +128,10 @@ case "$TASK" in
     *[Rr]elease*) VARIANT=release ;;
     *) VARIANT=debug ;;
 esac
-# `|| true`: under `set -eo pipefail` a missing output dir makes find exit non-zero, pipefail
-# propagates it and the script died right after a SUCCESSFUL build — with the `if [ -n "$BUILT" ]`
-# guard below (written for exactly that case) unreachable.
 BUILT=$(find "$DIR/app/build/outputs/apk/$VARIANT" -name '*.apk' 2>/dev/null | head -1 || true)
 if [ -n "$BUILT" ]; then
     find "$DIR" -maxdepth 1 -name "${NAME_LC}-*.apk" ! -name "*-debug.apk" -delete
     [ "$VARIANT" = release ] || find "$DIR" -maxdepth 1 -name "${NAME_LC}-*-${VARIANT}.apk" -delete
-    # The VARIANT is in the debug filename: without it a debug build silently replaced the release
-    # `<app>-<version>.apk` (the delete above removed it first) with an APK signed by the debug key,
-    # which then cannot be installed over a release build at all.
     if [ "$VARIANT" = release ]; then
         OUT="$DIR/${NAME_LC}-${VERSION:-unknown}.apk"
     else

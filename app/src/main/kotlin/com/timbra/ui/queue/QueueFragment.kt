@@ -49,8 +49,6 @@ class QueueFragment : Fragment(), MenuProvider {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         adapter = QueueAdapter(
             owner = viewLifecycleOwner,
-            // The row carries the timeline index it was BOUND with, which lags a reorder until
-            // the queue flow re-emits — so the id is the authority, exactly as for Remove.
             onClick = { item -> player.seekToQueueItem(item.timelineIndex, item.mediaId) },
             onLong = { item ->
                 ItemActions.showForQueue(this, item) {
@@ -69,8 +67,6 @@ class QueueFragment : Fragment(), MenuProvider {
         requireActivity().addMenuProvider(this, viewLifecycleOwner)
 
         viewLifecycleOwner.lifecycleScope.launch {
-            // viewLifecycleOwner-qualified: unqualified this resolves against the FRAGMENT, mixing
-            // two owners inside a view-scoped coroutine (see Ext.kt for the correct form).
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { player.queue.collect { fullQueue = it; refreshList() } }
                 launch {
@@ -84,10 +80,6 @@ class QueueFragment : Fragment(), MenuProvider {
 
     private fun refreshList() {
         if (dragging) {
-            // Don't reset the list under the finger — but remember that something arrived, so
-            // the drop re-applies it. Swallowing it outright left the rows bound to timeline
-            // indices from a queue that had since been replaced (a folder advance, Shuffle-All),
-            // and nothing ever re-emitted to correct them.
             missedQueueUpdate = true
             return
         }
@@ -141,9 +133,6 @@ class QueueFragment : Fragment(), MenuProvider {
             super.clearView(rv, vh)
             dragging = false
             player.reorderQueue(adapter.currentItems().map { it.mediaId })
-            // A reorder that reached the player re-emits and refreshes the list on its own, but
-            // one that netted no move (or whose ids are gone) doesn't — so apply anything that
-            // arrived during the drag, and re-sync the highlight the drag also suppressed.
             if (missedQueueUpdate) refreshList()
             adapter.currentIndex = player.state.value.queueIndex
         }

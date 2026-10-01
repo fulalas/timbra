@@ -31,12 +31,6 @@ class QueueAdapter(
             if (field == value) return
             val old = field
             field = value
-            // ONLY the two rows whose highlight moves. Notifying the whole min..max span in
-            // TIMELINE-INDEX space was far worse than it looks: with old == -1 it covered every row
-            // up to the new index, and under shuffle consecutive songs are arbitrarily far apart in
-            // timeline order, so nearly every transition rebound most of the queue — thousands of
-            // notifyItemChanged calls on the main thread per song change. The played-dim rides
-            // along with the next submit(), which is where `played` actually changes.
             notifyRowFor(old)
             notifyRowFor(value)
         }
@@ -48,10 +42,6 @@ class QueueAdapter(
     }
 
     fun submit(list: List<QueueItem>) {
-        // A real diff, not notifyDataSetChanged(): PlayerConnection re-emits the queue on every
-        // timeline change (and after markCurrentEnqueuedPlayed), so a blanket invalidation rebound
-        // every visible row — re-issuing an ArtLoader.load per row and dropping item animations
-        // and drag state.
         val old = items
         items = list
         DiffUtil.calculateDiff(object : DiffUtil.Callback() {
@@ -84,8 +74,6 @@ class QueueAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
         val playing = item.timelineIndex == currentIndex
-        // The item's own consumed mark, not a timeline-index comparison: under shuffle the index
-        // says nothing about what has been played.
         val played = item.played && !playing
         holder.b.title.text = item.displayTitle
         holder.b.subtitle.text = Format.subtitle(item.artist, item.album)

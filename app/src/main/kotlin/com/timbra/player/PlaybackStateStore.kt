@@ -4,13 +4,6 @@ package com.timbra.player
 import android.content.Context
 import androidx.media3.common.Player
 
-/**
- * The saved shuffle session is a list of TIMELINE INDICES, so it means nothing against any other
- * queue — and the session and the id list have two different writers (the service owns the
- * session, [PlayerConnection] the queue), so a process death between their two transactions can
- * leave them describing different queues. The session carries the fingerprint of the queue it was
- * taken from and is dropped on load unless it still matches.
- */
 fun queueFingerprint(mediaIds: List<String>): Int {
     var h = 1
     for (id in mediaIds) h = 31 * h + id.hashCode()
@@ -33,13 +26,6 @@ class PlaybackStateStore(context: Context) {
         val shufPlayed: List<Int>,
     )
 
-    /**
-     * The index and position go in the SAME transaction, because they only mean anything
-     * relative to this id list: they used to be written by a different event, so a timeline
-     * rebuild that fired only EVENT_TIMELINE_CHANGED (turning shuffle off, say) left the saved
-     * index pointing into the previous queue, and a process death in that window restored the
-     * wrong song at a meaningless position.
-     */
     fun saveQueue(trackIds: List<Long>, enqueuedIndices: List<Int>, index: Int, positionMs: Long) {
         prefs.edit()
             .putString(KEY_IDS, joinLongs(trackIds))
@@ -49,12 +35,6 @@ class PlaybackStateStore(context: Context) {
             .apply()
     }
 
-    /**
-     * Synchronized because the bump is a read-modify-write and there are two writers by design:
-     * [PlayerConnection] on the main thread and the service's detached folder advance. Two
-     * interleaved calls would otherwise both read N and write N+1, losing an increment — and a
-     * lost increment makes the connection conclude nobody changed the modes.
-     */
     @Synchronized
     fun saveModes(shuffle: ShuffleMode, repeat: RepeatMode) {
         prefs.edit()
@@ -66,12 +46,6 @@ class PlaybackStateStore(context: Context) {
 
     fun modesRevision(): Int = prefs.getInt(KEY_MODES_REV, 0)
 
-    /**
-     * The custom shuffle engine's no-repeat state, so a cold start doesn't re-open a pool the
-     * user is halfway through. Without it Next handed out songs already heard, and — because
-     * Advance-List only rolls into the next folder when the queue actually ENDS — a folder could
-     * repeat forever instead of advancing.
-     */
     fun saveShuffleSession(history: List<Int>, played: Set<Int>, fingerprint: Int) {
         prefs.edit()
             .putString(KEY_SHUF_HIST, joinInts(history))
@@ -88,8 +62,6 @@ class PlaybackStateStore(context: Context) {
             .apply()
     }
 
-    // Pre-sized joins: these run on the main thread (from a Player.Listener callback), and a
-    // 10k-track Shuffle-All queue grows an unsized StringBuilder through ~12 array copies.
     private fun joinLongs(values: List<Long>): String {
         val sb = StringBuilder(values.size * 8)
         for (i in values.indices) {
@@ -152,11 +124,6 @@ class PlaybackStateStore(context: Context) {
             ?.filter { it in valid }
             ?: emptyList()
 
-    /**
-     * Stored by NAME (see [enumByName]). The legacy ordinal keys are still read when no name is
-     * present, so an in-place update keeps the user's modes instead of silently resetting
-     * Advance-List to OFF.
-     */
     fun loadModes(): Pair<ShuffleMode, RepeatMode> {
         val shuffle = prefs.getString(KEY_SHUFFLE, null)
             ?.let { enumByName(it, ShuffleMode.OFF) }

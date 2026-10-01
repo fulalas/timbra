@@ -46,8 +46,6 @@ class NaturalOrderTest {
             "10 Ten.mp3", "2 Two.mp3", "01 One.mp3", "1 one again.mp3",
             "Intro.flac", "intro (alt).flac", "100.mp3", "20.mp3", "", "3",
         )
-        // Antisymmetry and reflexivity on every pair — a comparator that violates these makes
-        // sortedWith throw "Comparison method violates its general contract".
         for (a in names) {
             assertEquals(0, cmp(a, a))
             for (b in names) {

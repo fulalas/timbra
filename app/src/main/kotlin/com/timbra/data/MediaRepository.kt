@@ -28,20 +28,8 @@ class MediaRepository(context: Context) {
     private val unknownArtist by lazy { appContext.getString(R.string.unknown_artist) }
     private val unknownAlbum by lazy { appContext.getString(R.string.unknown_album) }
 
-    /**
-     * [invalidate] bumps a generation, and a build that started before it publishes NOTHING —
-     * the plain `field ?: build().also { field = it }` idiom could write pre-rescan data back
-     * after the cache was cleared (the build is already inside the `?:` branch when invalidate
-     * runs, and neither `@Volatile` nor coroutine cancellation stops the trailing assignment),
-     * so a deleted track stayed in the library and in folder navigation indefinitely. The mutex
-     * also stops two cold callers from running the same expensive query twice.
-     */
     private class Cache<T : Any> {
         @Volatile private var value: T? = null
-        // AtomicInteger, not a @Volatile Int: `generation++` is a read-modify-write, so two
-        // overlapping invalidations (a permission grant and a MediaStore change signal) could
-        // collapse into one increment — and a lost increment is exactly what lets an in-flight
-        // build() pass the check below and publish pre-rescan data.
         private val generation = AtomicInteger(0)
         private val lock = Mutex()
 
@@ -115,9 +103,6 @@ class MediaRepository(context: Context) {
                     tracks.size,
                 )
             }
-            // NATURAL, not plain lowercase(): every track list orders titles this way, so a
-            // lexicographic index made "Live 2" sort after "Live 10" on one screen and before
-            // it on the next.
             .sortedWith(compareBy(NATURAL) { it.title })
     }
 
@@ -142,10 +127,6 @@ class MediaRepository(context: Context) {
                 arrayOf(MediaStore.Audio.Genres._ID, MediaStore.Audio.Genres.NAME),
                 null, null, MediaStore.Audio.Genres.NAME,
             )?.use { c ->
-                // Tolerant column lookup, like the core track query below: these are the LEGACY
-                // MediaStore tables and are sparse on Android 11+, so a provider that doesn't
-                // expose a column must leave the category empty rather than throw out of the
-                // caller's unguarded lifecycleScope.launch and take the app down.
                 val idCol = c.getColumnIndex(MediaStore.Audio.Genres._ID)
                 val nameCol = c.getColumnIndex(MediaStore.Audio.Genres.NAME)
                 if (idCol >= 0 && nameCol >= 0) {
@@ -189,9 +170,6 @@ class MediaRepository(context: Context) {
     suspend fun playlists(): List<Playlist> = playlistsCache.get {
         val tracks = allTracks()
         withContext(Dispatchers.IO) {
-            // Build the id map once, not per playlist — and INSIDE the dispatch: outside it, this
-            // O(n) map over the whole library ran on whatever dispatcher the caller happened to
-            // use, which nothing here enforces is not the main thread.
             val byId = tracks.associateBy { it.id }
             val out = mutableListOf<Playlist>()
             resolver.query(
@@ -199,8 +177,6 @@ class MediaRepository(context: Context) {
                 arrayOf(MediaStore.Audio.Playlists._ID, MediaStore.Audio.Playlists.NAME),
                 null, null, MediaStore.Audio.Playlists.NAME,
             )?.use { c ->
-                // Tolerant, for the same reason as genres() above: legacy table, sparse on
-                // Android 11+, and the throw would land in an unguarded coroutine.
                 val idCol = c.getColumnIndex(MediaStore.Audio.Playlists._ID)
                 val nameCol = c.getColumnIndex(MediaStore.Audio.Playlists.NAME)
                 if (idCol >= 0 && nameCol >= 0) {
@@ -238,18 +214,6 @@ class MediaRepository(context: Context) {
         return ids
     }
 
-    /**
-     * Deliberately NOT cached — reading through to MediaStore is the entire point.
-     *
-     * The path fold catches what the row count and the newest DATE_ADDED / DATE_MODIFIED can't:
-     * a same-volume MOVE or RENAME changes neither the count nor the file's mtime, and the folder
-     * tree and the traversal list would otherwise keep serving a hierarchy that no longer exists.
-     * Summed (not accumulated in order), since the row order is unspecified.
-     *
-     * Folded here rather than asked for as `count(*)`/`max(...)`: MediaStore validates the
-     * projection on Android 10+ and rejects anything that isn't a real column, so SQL aggregates
-     * are unavailable.
-     */
     suspend fun libraryFingerprint(): String = withContext(Dispatchers.IO) {
         var count = 0
         var newestAdded = 0L
@@ -289,7 +253,6 @@ class MediaRepository(context: Context) {
             add(MediaStore.Audio.Media.DATE_ADDED)
             add(MediaStore.Audio.Media.DATA)
             add(MediaStore.Audio.Media.DISPLAY_NAME)
-            // RELATIVE_PATH only exists on API 29+; querying it earlier throws.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                 add(MediaStore.Audio.Media.RELATIVE_PATH)
             }
@@ -300,9 +263,6 @@ class MediaRepository(context: Context) {
             MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
             projection, selection, null, null,
         )?.use { c ->
-            // Resolve the column indices ONCE: getColumnIndex is a linear scan of the column
-            // names, and doing all 11 per row cost ~110k lookups on a 10k-track library —
-            // during the one query that gates first paint of every list.
             val cols = TrackColumns(c)
             while (c.moveToNext()) out.add(readTrack(c, cols))
         }
@@ -342,10 +302,6 @@ class MediaRepository(context: Context) {
             album = c.getString(cols.album).orUnknown(),
             albumId = c.getLong(cols.albumId),
             durationMs = c.getLong(cols.duration),
-            // MediaStore encodes disc*1000 + track. Keep BOTH: dropping the disc made a
-            // multi-disc album interleave under the album/track order. `>= 1000` (not `>`),
-            // so disc 1 / track 0 — stored as exactly 1000 — doesn't survive as trackNo 1000
-            // and sort itself last.
             trackNo = if (trackRaw >= 1000) trackRaw % 1000 else trackRaw,
             discNo = if (trackRaw >= 1000) trackRaw / 1000 else 0,
             dateAddedSec = c.getLong(cols.dateAdded),

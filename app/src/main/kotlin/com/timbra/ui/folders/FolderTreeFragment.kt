@@ -49,12 +49,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
     private lateinit var adapter: LibraryListAdapter
 
-    /**
-     * What a row tap plays, committed on the main thread TOGETHER with the rows it belongs to.
-     * The playable list used to be assigned from inside the background sort block, so during a
-     * re-sort (or a View-As switch) it no longer matched the rows still on screen — a tap in that
-     * window carried an index from the old list into the new one and played a different song.
-     */
     private class Loaded(
         val items: List<ListItem>,
         val playable: List<Track>,
@@ -76,17 +70,12 @@ class FolderTreeFragment : Fragment(), MenuProvider {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         folderPath = requireArguments().getString("folderPath", "")
-        // ifBlank, not just a getString default: the nav-graph default is deliberately empty
-        // (NavInflater rejects a @string/... default), so the localised label is applied here.
         folderTitle = requireArguments().getString("folderTitle", "")
             .ifBlank { getString(R.string.cat_folders) }
         (requireActivity() as AppCompatActivity).supportActionBar?.title = folderTitle
 
         adapter = LibraryListAdapter(
             owner = viewLifecycleOwner,
-            // folderContext anchors the Advance-List walk on the folder actually being browsed;
-            // omitting it left the anchor to the playing file's own directory, which in flat view
-            // is a subfolder whose neighbours are already inside this queue.
             onTrack = { index ->
                 player.play(loaded.playable, index, folderContext = loaded.folderContext)
             },
@@ -103,10 +92,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
     }
 
     private fun load() {
-        // Cancel the build already running: View-As, Sort and the library-epoch reload all call
-        // this, and while each commit is atomic the ORDERING was not — on a large folder the
-        // slower earlier build could finish last and overwrite the newer rows together with its
-        // playable list and folderContext, which is the mismatch [Loaded] exists to prevent.
         loadJob?.cancel()
         loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val root = requireContext().repository.folderRoot()
@@ -166,9 +151,6 @@ class FolderTreeFragment : Fragment(), MenuProvider {
             is ListItem.TrackRow ->
                 ItemActions.show(this, item.track.displayTitle, listOf(item.track))
             is ListItem.FolderRow -> {
-                // Flattening a whole subtree and natural-sorting it is exactly the work load()
-                // takes care to keep off the main thread — doing it inline in the click callback
-                // froze the UI for a large folder before the dialog even appeared.
                 val order = folderSort.sortOrder
                 viewLifecycleOwner.lifecycleScope.launch {
                     val ts = withContext(Dispatchers.Default) {

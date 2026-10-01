@@ -98,8 +98,6 @@
     <string name="unknown_album">Unknown album</string>
     <string name="nothing_playing">Nothing playing</string>
     <string name="empty_folder">No audio here</string>
-    <!-- Quantity strings. A fixed plural form rendered "1 songs" on every single-track folder
-         and index row, which is not an edge case here. -->
     <plurals name="song_count">
         <item quantity="one">%1$d song</item>
         <item quantity="other">%1$d songs</item>

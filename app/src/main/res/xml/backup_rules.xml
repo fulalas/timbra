@@ -1,9 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  playback_state and folder_sort are deliberately left out: they hold MediaStore row ids (the
-  queue and the index into it), which are per-device and change on a rescan — restoring them onto
-  another device resolves them against a different library and lands on an arbitrary song.
--->
 <full-backup-content>
     <include domain="sharedpref" path="eq_settings.xml" />
 </full-backup-content>

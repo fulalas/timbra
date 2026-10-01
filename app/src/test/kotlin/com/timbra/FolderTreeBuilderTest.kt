@@ -28,8 +28,6 @@ class FolderTreeBuilderTest {
     }
 
     @Test fun `total counts are filled in for the whole tree after the build`() {
-        // Not a `by lazy` on the node: tracks and subFolders are populated after construction, so a
-        // lazy value read mid-build would memoise a partial count permanently.
         val root = library()
         assertEquals(4, root.totalTrackCount)
         val byName = root.subFolders

@@ -1,3 +1,9 @@
+# Timbra 0.9.17
+
+### Playback
+
+- In shuffle, Next after Previous goes back to the songs you already heard, in the same order, before picking new ones
+
 # Timbra 0.9.16
 
 ### Playback

@@ -30,11 +30,6 @@ val MediaItem.pathExtra: String
 val MediaItem.trackId: Long?
     get() = mediaId.toLongOrNull()
 
-/**
- * The same item marked as a consumed play-next entry. Metadata-only change with the mediaId and
- * Uri untouched, which media3 applies in place — so replacing the currently-playing item with
- * this does NOT re-prepare it or interrupt audio.
- */
 fun MediaItem.markEnqueuedPlayed(): MediaItem {
     val md = mediaMetadata
     val extras = Bundle(md.extras ?: Bundle()).apply { putBoolean(KEY_ENQ_PLAYED, true) }

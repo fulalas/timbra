@@ -44,8 +44,6 @@ class FormatTest {
     }
 
     @Test fun `audioInfo takes the extension from the FILENAME, not the path`() {
-        // A dotted directory with an extension-less file used to yield a "container" containing
-        // path separators.
         assertEquals("44.1KHz", Format.audioInfo(44_100, 0, "/m/Vol.2/track01"))
         assertEquals("44.1KHz  ogg", Format.audioInfo(44_100, 0, "/m/Vol.2/track01.OGG"))
     }

@@ -12,15 +12,6 @@ import com.timbra.folderSort
 import com.timbra.repository
 import kotlinx.coroutines.sync.withLock
 
-/**
- * It used to exist twice — richly in the UI (deck/phantom handling, folderContext, a generation
- * guard and a mutex) and as a cut-down copy in [PlaybackService] for the backgrounded case,
- * coordinated only by "is the UI attached". The copies had drifted on three axes: the service
- * anchored on the playing file's directory instead of the folder a jump had loaded, it always
- * entered at index 0 and force-started playback (so there was no BACKWARD advance at all while
- * detached, and a stuck-track recovery could start audio on a player the user had paused), and
- * it bumped neither the generation nor the mutex the UI added to stop double jumps.
- */
 object FolderAdvance {
 
     suspend fun move(
@@ -53,17 +44,10 @@ object FolderAdvance {
             player.prepare()
             if (resume) player.play()
 
-            // Shuffle-All's pool was the whole library; it is now this one folder — which is
-            // exactly what Shuffle-Songs means (see [ShuffleMode.narrowedToFolder]). Persisting
-            // it bumps the modes revision, which is how a live PlayerConnection notices and
-            // re-adopts (its own in-memory copy would otherwise keep claiming ALL and write it
-            // back over this).
             val store = context.app.playbackStore
             val (shuffle, repeat) = store.loadModes()
             val narrowed = shuffle.narrowedToFolder()
             if (narrowed != shuffle) store.saveModes(narrowed, repeat)
-            // The UI persists the queue on timeline changes, but it may be detached — mirror it
-            // here so a process death mid-background doesn't restore the STALE previous folder.
             store.saveQueue(tracks.map { it.id }, emptyList(), start, 0L)
             target
         }

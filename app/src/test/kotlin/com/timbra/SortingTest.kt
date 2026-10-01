@@ -10,8 +10,6 @@ import org.junit.Test
 class SortingTest {
 
     @Test fun `title order uses the DISPLAYED title, not the raw tag`() {
-        // An untagged track shows its filename, so it must sort as that filename — ordering on the
-        // raw (blank) tag clumped every untagged track at the top under the empty string.
         val tagged = track(id = 1, title = "Berlin", path = "/m/zz.mp3")
         val untagged = track(id = 2, title = "", path = "/m/alpha.mp3")
         assertEquals(
@@ -21,8 +19,6 @@ class SortingTest {
     }
 
     @Test fun `date order is deterministic when the timestamps tie`() {
-        // A folder copied in one operation shares dateAddedSec to the second; without a tiebreak
-        // the result silently depended on the order of the input list.
         val a = track(id = 1, dateAddedSec = 100, path = "/m/a.mp3")
         val b = track(id = 2, dateAddedSec = 100, path = "/m/b.mp3")
         val c = track(id = 3, dateAddedSec = 100, path = "/m/c.mp3")
@@ -48,8 +44,6 @@ class SortingTest {
     }
 
     @Test fun `an untagged disc number falls in with the first disc`() {
-        // discNo 0 means "no disc tag", not "disc zero" — as a raw key it sorted untagged files
-        // ahead of disc 1 on a partially-tagged album.
         val untagged = track(id = 1, discNo = 0, trackNo = 5, title = "e")
         val disc1 = track(id = 2, discNo = 1, trackNo = 1, title = "a")
         val disc2 = track(id = 3, discNo = 2, trackNo = 1, title = "b")

@@ -12,8 +12,6 @@ object Popup {
     private const val FADE_MS = 150L
 
     fun show(view: TextView, msg: String, durationMs: Long = SHORT_MS) {
-        // Cancel BEFORE re-showing: ViewPropertyAnimator runs withEndAction on cancel too, so
-        // the outgoing fade's hide would land right after this show and blank the popup.
         view.animate().cancel()
         view.text = msg
         view.alpha = 1f

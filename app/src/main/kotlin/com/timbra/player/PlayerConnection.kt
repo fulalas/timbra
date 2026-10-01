@@ -35,12 +35,6 @@ data class UiPlayback(
     val repeat: RepeatMode = RepeatMode.OFF,
     val sampleRateHz: Int = 0,
     val bitrateBps: Int = 0,
-    /**
-     * Monotonic count of genuine LIVE song transitions (ExoPlayer AUTO end / SEEK next-prev-tap)
-     * observed while connected. The player screen animates its card-flip only when this advances,
-     * so a song that changed while backgrounded — surfaced by a reconnect state-sync that leaves
-     * the count untouched — snaps into place instead of spuriously flipping.
-     */
     val liveTransitionSeq: Int = 0,
 ) {
     val displayTitle: String get() = title.ifBlank { filePath.substringAfterLast('/') }
@@ -55,9 +49,6 @@ data class QueueItem(
     val filePath: String,
     val timelineIndex: Int,
     val enqueued: Boolean,
-    /** True once an [enqueued] song has been played, i.e. the block is consumed up to here.
-     *  Carried on the item itself rather than inferred from the timeline index, which says
-     *  nothing about progress under shuffle (see [KEY_ENQ_PLAYED]). */
     val played: Boolean = false,
 ) {
     val displayTitle: String get() = title.ifBlank { filePath.substringAfterLast('/') }
@@ -74,29 +65,13 @@ class PlayerConnection(private val context: Context) {
     private var appShuffle = ShuffleMode.OFF
     private var appRepeat = RepeatMode.OFF
 
-    /**
-     * The [PlaybackStateStore.modesRevision] this connection last wrote or read. Anything higher
-     * means SOMEONE ELSE changed the modes — the service narrows Shuffle-All to Shuffle-Songs
-     * when it advances a folder — and the in-memory copy must be refreshed instead of being
-     * written back over theirs (which left the shuffle icon claiming a whole-library pool over a
-     * one-folder queue, and made the next tap cycle the wrong way).
-     */
     private var knownModesRevision = -1
 
-    /** [currentId] rather than a position: the consumer resolves [ids] against the library with
-     *  `mapNotNull`, so a track deleted or rescanned away since shuffle was enabled shortens the
-     *  list — and a stored index then pointed at the wrong song, with coerceIn hiding it. */
     private data class PreShuffle(val ids: List<Long>, val currentId: Long?, val positionMs: Long)
     private var preShuffle: PreShuffle? = null
 
     private var enqueueEnd = -1
 
-    /**
-     * The [PlaybackSession.queueGeneration] this connection has already accounted for. A higher
-     * one means the queue was replaced by someone else — the service, rolling into the next
-     * folder — and the per-queue bookkeeping ([adoptQueueReplacement]) still has to happen, or it
-     * would describe a queue the user has left.
-     */
     private var knownQueueGeneration = 0
 
     private val _state = MutableStateFlow(UiPlayback())
@@ -113,10 +88,6 @@ class PlayerConnection(private val context: Context) {
         }
     }
 
-    /** Media-id signature of the last rebuilt queue: the shuffle engine rewrites the shuffle
-     *  order on every transition, which also fires EVENT_TIMELINE_CHANGED — but the ITEMS
-     *  rarely change, and rebuilding + persisting thousands of ids per song change is
-     *  needless main-thread churn. */
     private var lastQueueIdsSig = 0
 
     private fun queueIdsSignature(p: Player): Int {
@@ -127,15 +98,6 @@ class PlayerConnection(private val context: Context) {
 
     private var liveTransitionSeq = 0
 
-    /**
-     * One queue rebuild + persist per message-loop turn, however many timeline events land in it.
-     * Turning shuffle on or off rewrites the timeline in four steps (see [rebuildAroundCurrent])
-     * and each one fires EVENT_TIMELINE_CHANGED: the whole list was rebuilt and written to disk
-     * four times for one button press, and the player deck was rebuilt from each half-assembled
-     * intermediate. Posted rather than flag-gated around the surgery, because whether media3
-     * delivers those events inside the mutating call or after it is not ours to assume — either
-     * way they are all in the queue ahead of this.
-     */
     private val queueRefresh = Runnable {
         val c = controller ?: return@Runnable
         val sig = queueIdsSignature(c)
@@ -151,10 +113,6 @@ class PlayerConnection(private val context: Context) {
 
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            // Only actual playback movement observed live counts as a flip-worthy transition:
-            // AUTO (a song ended into the next) and SEEK (Next/Prev/tap). REPEAT (repeat-one) and
-            // PLAYLIST_CHANGED (queue rebuild, or the reconnect state-sync after backgrounding)
-            // must NOT flip — the latter is exactly the spurious foreground animation we avoid.
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
             ) {
@@ -180,9 +138,6 @@ class PlayerConnection(private val context: Context) {
                     Player.EVENT_IS_PLAYING_CHANGED,
                 )
             ) savePosition()
-            // The ticker self-perpetuates while playing and is kicked once on connect, so it
-            // only ever needs (re)starting when playback actually resumes — kicking it on every
-            // event batch would reset its cadence and push a duplicate state emission each time.
             if (events.contains(Player.EVENT_IS_PLAYING_CHANGED) && player.isPlaying) {
                 handler.removeCallbacks(ticker)
                 handler.post(ticker)
@@ -202,17 +157,10 @@ class PlayerConnection(private val context: Context) {
         if (controller != null) {
             onReady(); return
         }
-        // A build is already in flight with its own onReady queued; a second one would leak a
-        // controller (the field is overwritten, so release() could never reach the first).
         if (controllerFuture != null) return
         buildController(onReady, attempt = 0, epoch = connectEpoch)
     }
 
-    /**
-     * Identifies the current connect cycle, so a pending retry from a previous one is abandoned.
-     * Without it, a build that failed just before onStop would retry AFTER [release] and bind a
-     * controller nobody owns — keeping the service alive with a 500ms state ticker running.
-     */
     private var connectEpoch = 0
 
     private fun buildController(onReady: () -> Unit, attempt: Int, epoch: Int) {
@@ -227,14 +175,9 @@ class PlayerConnection(private val context: Context) {
             .buildAsync()
         controllerFuture = future
         future.addListener({
-            // release() may have cancelled the future before it resolved; get() would throw.
             if (future.isCancelled || epoch != connectEpoch) return@addListener
             val built = runCatching { future.get() }.getOrNull()
             if (built == null) {
-                // The session couldn't be bound (service start restriction, a crash loop). Retry
-                // shortly instead of going silent until the next onStop/onStart — a swallowed
-                // failure left the app with no queue restore, no auto-open and dead transport
-                // controls, with nothing to recover it and a stale future still held.
                 controllerFuture = null
                 if (attempt < MAX_CONNECT_ATTEMPTS) {
                     handler.postDelayed({
@@ -250,14 +193,10 @@ class PlayerConnection(private val context: Context) {
             controller = built
             built.addListener(listener)
             readAudioFormat(built.sessionExtras)
-            // A fresh controller doesn't replay events, so if a song is already playing the
-            // listener won't fire to start the ticker — kick it here (it self-stops when paused).
             handler.removeCallbacks(ticker)
             handler.post(ticker)
             rebuildQueue()
             knownQueueGeneration = session.queueGeneration
-            // Re-adopt persisted modes onto a surviving queue BEFORE the first state push, so the
-            // repeat/shuffle icons don't flash their defaults for a frame.
             adoptExternalModes()
             pushState()
             onReady()
@@ -266,10 +205,6 @@ class PlayerConnection(private val context: Context) {
 
     fun release() {
         savePosition()
-        // FLUSH the pending refresh, don't drop it: it carries the queue persist, so a
-        // replacement still pending here (Home pressed right after it) would leave the stored
-        // ids describing the old queue while the index and position describe the new one — and
-        // load() only coerces the index, so the restore lands on the wrong song.
         handler.removeCallbacks(queueRefresh)
         queueRefresh.run()
         connectEpoch++
@@ -288,9 +223,6 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         val items = _queue.value
         if (items.isEmpty()) return
-        // Only the PENDING part of the play-next block is persisted as enqueued: a consumed
-        // entry keeps its place in the queue, but restoring it as enqueued would resurrect it
-        // as "coming up next" and re-derive the block's end from it.
         store.saveQueue(
             items.map { it.mediaId },
             items.filter { it.enqueued && !it.played }.map { it.timelineIndex },
@@ -332,8 +264,6 @@ class PlayerConnection(private val context: Context) {
     ) {
         val c = controller ?: return
         markQueueReplaced(null)
-        // Before the queue goes in: enabling shuffle below is what makes the service build its
-        // session, and it has to find this waiting rather than start from scratch.
         if (shuffle != ShuffleMode.OFF && shufHistory.isNotEmpty()) {
             session.offerShuffleRestore(
                 PlaybackSession.ShuffleRestore(
@@ -352,10 +282,6 @@ class PlayerConnection(private val context: Context) {
         enqueueEnd = enqueuedFlags.indexOfLast { it }
         applyModes(shuffle, repeat, forceShuffleOrder = true)
         preShuffle = if (appShuffle != ShuffleMode.OFF) {
-            // Excluding the enqueued items, exactly as [takeShuffleSnapshot] does and for the same
-            // reason: the play-next block travels across mode changes on its own, so snapshotting
-            // it here too made a later shuffle-off restore those songs TWICE — once as plain list
-            // entries and once as the carried block.
             PreShuffle(
                 tracks.filterIndexed { i, _ -> !enqueuedFlags.getOrElse(i) { false } }.map { it.id },
                 tracks.getOrNull(start)?.id,
@@ -365,15 +291,6 @@ class PlayerConnection(private val context: Context) {
         c.prepare()
     }
 
-    /**
-     * Covers two cases with one mechanism: a fresh connection to a queue the [PlaybackService]
-     * outlived (a config change, or the system reclaiming the Activity but keeping the process),
-     * where the modes would otherwise default to OFF and Advance-List would silently stop
-     * advancing — its player mode is REPEAT_MODE_OFF, indistinguishable from true OFF; and a LIVE
-     * connection whose modes the service changed underneath it (a detached folder advance narrows
-     * Shuffle-All). Gated on [PlaybackStateStore.modesRevision], so a connection holding the
-     * authoritative modes never re-reads disk and clobbers its own live state.
-     */
     private fun adoptExternalModes() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) return
@@ -390,12 +307,6 @@ class PlayerConnection(private val context: Context) {
         knownQueueGeneration = session.queueGeneration
     }
 
-    /**
-     * Both halves matter. The play-next insertion cursor is an index into the queue that is gone,
-     * so a later "play next" would splice at a meaningless slot (or past the end); and the
-     * pre-shuffle snapshot has to follow the NEW queue, or cycling shuffle back to OFF would
-     * "restore" a folder the user left two advances ago — teleporting playback backwards.
-     */
     private fun adoptQueueReplacement() {
         knownQueueGeneration = session.queueGeneration
         enqueueEnd = -1
@@ -405,10 +316,6 @@ class PlayerConnection(private val context: Context) {
     fun clearQueue() {
         val c = controller ?: return
         val cur = c.currentMediaItemIndex
-        // Never remove the song being listened to, even when it is itself a play-next entry:
-        // dropping the current item makes the player continue with whatever follows, so this
-        // used to cut playback off mid-song. Removed in contiguous RUNS (one session
-        // transaction each) rather than one item at a time.
         var i = c.mediaItemCount - 1
         while (i >= 0) {
             if (i == cur || !c.getMediaItemAt(i).isEnqueued) { i--; continue }
@@ -430,9 +337,6 @@ class PlayerConnection(private val context: Context) {
         enqueueEnd = -1
         markQueueReplaced(folderContext)
         val start = startIndex.coerceIn(0, maxOf(0, tracks.size - 1))
-        // The queue is being replaced while shuffle may be on: the pre-shuffle snapshot must
-        // follow the NEW queue (turning shuffle off should keep the user here, sequential),
-        // not restore whatever list shuffle happened to be enabled in long ago.
         preShuffle = if (appShuffle != ShuffleMode.OFF) {
             PreShuffle(tracks.map { it.id }, tracks.getOrNull(start)?.id, 0)
         } else null
@@ -447,10 +351,6 @@ class PlayerConnection(private val context: Context) {
         if (tracks.isEmpty()) return
         val items = tracks.map { it.toMediaItem(context, enqueued = true) }
         if (c.mediaItemCount == 0) {
-            // Nothing queued yet: these BECOME the queue — but still FLAGGED, so the Queue
-            // screen lists them, Clear Queue clears them and they persist as the play-next
-            // block. Delegating to play() here built them unflagged, making the enqueue
-            // invisible to every one of those.
             markQueueReplaced(null)
             preShuffle = null
             c.setMediaItems(items, 0, 0)
@@ -461,9 +361,6 @@ class PlayerConnection(private val context: Context) {
         }
         val cur = c.currentMediaItemIndex
         val insertStart = (maxOf(enqueueEnd, cur) + 1).coerceAtMost(c.mediaItemCount)
-        // ONE session transaction. Inserting per item cost a binder round-trip and an O(n)
-        // timeline masking copy each, i.e. O(n²) on the main thread — enqueueing a whole folder
-        // subtree (thousands of tracks) froze the UI.
         c.addMediaItems(insertStart, items)
         enqueueEnd = insertStart + items.size - 1
         when (c.playbackState) {
@@ -488,17 +385,6 @@ class PlayerConnection(private val context: Context) {
         else FolderAdvance.move(context, c, forward, expectedGen, startAt)
     }
 
-    /**
-     * Next. Advance-List's "past the last song jumps to the next folder" is NOT implemented here:
-     * the service owns it, so this button, the notification, the lock screen and a Bluetooth
-     * remote all behave identically — the special case used to be UI-only, and every system
-     * transport control silently did nothing at a folder's end.
-     *
-     * Normally the seek reaches the service's [PlaybackService.AdvancePlayer], which recognises
-     * the edge. When media3 has masked the command out (it derives availability from the plain
-     * player, where Advance-List is just REPEAT_MODE_OFF) the seek would be dropped locally
-     * instead, so ask for the step explicitly. Exactly one of the two routes ever fires.
-     */
     fun next() {
         val c = controller ?: return
         if (c.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT)) c.seekToNext()
@@ -507,9 +393,6 @@ class PlayerConnection(private val context: Context) {
 
     fun previous() {
         val c = controller ?: return
-        // Shuffle: Previous only walks back through songs actually played this session. At the
-        // start of that history there is nothing before — restart a song in progress, otherwise
-        // do nothing (never wrap, never jump folders; seekToPrevious would restart-loop).
         if (c.shuffleModeEnabled && !c.hasPreviousMediaItem()) {
             if (c.currentPosition > c.maxSeekToPreviousPosition) c.seekTo(0)
             return
@@ -557,11 +440,6 @@ class PlayerConnection(private val context: Context) {
         }
     }
 
-    /**
-     * Remove a single item from the timeline (Queue screen "Remove"). [expectedMediaId]
-     * guards against a stale [index]: the displayed timelineIndex lags behind after an
-     * earlier removal, and removing blindly by index would delete the wrong song.
-     */
     fun removeQueueItem(index: Int, expectedMediaId: Long) {
         val c = controller ?: return
         val target = resolveIndex(c, index, expectedMediaId) ?: return
@@ -600,21 +478,11 @@ class PlayerConnection(private val context: Context) {
     private fun takeShuffleSnapshot() {
         val c = controller ?: return
         if (c.mediaItemCount == 0) { preShuffle = null; return }
-        // The playing LIST only: the enqueued block travels across mode changes on its own (see
-        // [spliceEnqueued]), so snapshotting it here too would restore those songs twice — once
-        // as plain list entries and once as the carried play-next block.
         val plain = (0 until c.mediaItemCount).filter { !c.getMediaItemAt(it).isEnqueued }
         val ids = plain.mapNotNull { c.getMediaItemAt(it).trackId }
         preShuffle = PreShuffle(ids, c.currentMediaItem?.trackId, c.currentPosition.coerceAtLeast(0))
     }
 
-    /**
-     * Metadata-only (same mediaId and Uri), so media3 applies it in place and playback is not
-     * interrupted.
-     *
-     * Posted rather than run inline: this fires from a [Player.Listener] callback, and mutating
-     * the timeline from inside one is best avoided.
-     */
     private fun markCurrentEnqueuedPlayed() {
         handler.post {
             val c = controller ?: return@post
@@ -623,31 +491,17 @@ class PlayerConnection(private val context: Context) {
             val item = c.getMediaItemAt(i)
             if (!item.isEnqueued || item.isEnqueuedPlayed) return@post
             c.replaceMediaItem(i, item.markEnqueuedPlayed())
-            // The media ids didn't change, so the queue signature won't notice this — refresh
-            // explicitly so the Queue screen re-dims and the persisted pending set shrinks.
             rebuildQueue()
             saveQueue()
         }
     }
 
-    /**
-     * Lift the PENDING play-next block off the live timeline so a queue rebuild can carry it over
-     * (the rebuild sources have no enqueued flags — a verbatim rebuild would drop the block).
-     * The playing song is excluded: the seamless rebuild keeps it in place. Songs the block has
-     * already played are excluded too, or every mode change would splice them back in right
-     * after the current song and replay them.
-     */
     private fun liftEnqueued(c: MediaController): List<MediaItem> =
         (0 until c.mediaItemCount)
             .filter { it != c.currentMediaItemIndex }
             .map { c.getMediaItemAt(it) }
             .filter { it.isEnqueued && !it.isEnqueuedPlayed }
 
-    /**
-     * setMediaItems would re-prepare the currently-playing item and cause a ~0.5s gap, so it is
-     * left in place: strip the others around it, re-add the rest before and after, then splice
-     * the [carried] play-next block back in right behind it.
-     */
     private fun rebuildAroundCurrent(
         c: MediaController,
         tracks: List<Track>,
@@ -701,10 +555,6 @@ class PlayerConnection(private val context: Context) {
         if (tracks.isEmpty()) return
         appShuffle = ShuffleMode.ALL
         markQueueReplaced(null)
-        // Widening the pool to the whole library must not throw away what the user explicitly
-        // queued with "play next" (see [liftEnqueued]). Cycling the shuffle button from
-        // Shuffle-Songs to OFF passes THROUGH here, so losing the block here loses it for good —
-        // disableShuffleRestoring would then have nothing left to carry over.
         val carried = liftEnqueued(c)
         enqueueEnd = -1
         val curId = c.currentMediaItem?.trackId
@@ -735,7 +585,6 @@ class PlayerConnection(private val context: Context) {
         val c = controller ?: return
         val args = android.os.Bundle().apply {
             putBoolean(PlaybackService.EXTRA_EQ_ENABLED, enabled)
-            // Copied: the equalizer screen keeps mutating its own array as the fader moves.
             putIntArray(PlaybackService.EXTRA_EQ_GAINS, gainsDb.copyOf())
         }
         c.sendCustomCommand(SessionCommand(PlaybackService.CMD_APPLY_EQ, android.os.Bundle.EMPTY), args)
@@ -769,10 +618,6 @@ class PlayerConnection(private val context: Context) {
         val c = controller
         val item = c?.currentMediaItem
         if (c == null || item == null) {
-            // Keep the live-transition counter monotonic even through a momentary no-item state
-            // (e.g. the reconnect churn on foreground): resetting it to 0 here would make the very
-            // next real song look like a fresh transition and spuriously flip the deck. The modes
-            // are carried too, so this flow is the single source of truth for them.
             _state.value = UiPlayback(
                 liveTransitionSeq = liveTransitionSeq,
                 shuffle = appShuffle,

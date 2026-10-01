@@ -48,9 +48,6 @@ class LibraryFragment : Fragment(), MenuProvider {
 
     private fun onCategory(cat: Category) {
         val nav = findNavController()
-        // ONE dispatch over the enum, with every value spelled out — the nested second `when`
-        // ended in an `else -> KIND_SONGS` catch-all that could only ever mean SONGS, so a newly
-        // added CategoryKind silently opened "All Songs" instead of failing to compile.
         val listKind = when (cat.kind) {
             CategoryKind.FOLDERS -> {
                 nav.navigate(

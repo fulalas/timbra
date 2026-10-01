@@ -46,12 +46,6 @@ class TrackListFragment : Fragment(), MenuProvider {
     private lateinit var adapter: LibraryListAdapter
     private lateinit var sortOrder: SortOrder
 
-    /**
-     * What a row tap plays, committed on the main thread TOGETHER with the rows it belongs to.
-     * Assigning it from inside the background sort block meant that during a re-sort it no longer
-     * matched the rows on screen, so a tap carried an index from the old order into the new one
-     * and played a different song.
-     */
     private var playable: List<Track> = emptyList()
 
     private var loadJob: Job? = null
@@ -67,8 +61,6 @@ class TrackListFragment : Fragment(), MenuProvider {
         kind = requireArguments().getString("listKind", KIND_SONGS)
         listId = requireArguments().getLong("listId", -1L)
         listTitle = requireArguments().getString("listTitle", getString(R.string.library))
-        // Restored across rotation and back-stack returns; FolderSort's doc calls out losing a
-        // sort choice that way as a bug, and this screen had it too.
         sortOrder = savedInstanceState?.getString(STATE_SORT)
             ?.let { enumByName(it, defaultSortFor(kind)) }
             ?: defaultSortFor(kind)
@@ -95,15 +87,9 @@ class TrackListFragment : Fragment(), MenuProvider {
     }
 
     private fun load() {
-        // Cancel the build already running: the sort dialog and the library-epoch reload both call
-        // this, and an older, slower whole-library sort could otherwise commit last and pair stale
-        // rows with a stale `playable` list — a tap then plays a different song.
         loadJob?.cancel()
         loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val repo = requireContext().repository
-            // Resolved on the main thread while the fragment is definitely attached: the row
-            // mapping below runs on Dispatchers.Default, and Fragment.getString() there would
-            // throw once the user navigated away mid-load.
             val res = requireContext().resources
             val built = withContext(Dispatchers.Default) { when (kind) {
                 KIND_SONGS -> trackRows(repo.allTracks().sortedBy(sortOrder))

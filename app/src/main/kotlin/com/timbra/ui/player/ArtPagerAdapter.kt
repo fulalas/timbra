@@ -25,16 +25,11 @@ class ArtPagerAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = getItem(position)
-        // Load via the track's content Uri (not albumId alone) so the deck finds embedded art
-        // through loadThumbnail — same path the browse list uses — instead of only the legacy
-        // album-art table, which misses covers on albums MediaStore didn't index there.
         ArtLoader.load(holder.b.pageArt, owner, MediaRepository.trackUri(item.mediaId), item.albumId) { has ->
             holder.b.pageBrand.isVisible = !has
         }
     }
 
-    // Blank a recycled page so a pooled ImageView can't flash the previous song's cover
-    // before its next bind paints.
     override fun onViewRecycled(holder: VH) {
         ArtLoader.clear(holder.b.pageArt)
         holder.b.pageBrand.isVisible = false
@@ -42,11 +37,6 @@ class ArtPagerAdapter(
 
     companion object {
         private val DIFF = object : DiffUtil.ItemCallback<QueueItem>() {
-            // Identity = the track AND its slot. Keying on slot alone would make a full queue
-            // swap (a folder advance) rebind the visible page in place — e.g. the next-folder
-            // phantom card reloading a different cover mid-transition. Requiring the mediaId to
-            // match too means a replaced queue diffs to insert/remove, so no visible page is
-            // mutated under the user and the incoming page paints its (cached) art immediately.
             override fun areItemsTheSame(a: QueueItem, b: QueueItem) =
                 a.timelineIndex == b.timelineIndex && a.mediaId == b.mediaId
 

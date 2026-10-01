@@ -13,10 +13,6 @@ class EqSettings(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
 
     fun gains(): IntArray {
-        // map, NOT mapNotNull: the list is POSITIONAL (index = band), so dropping an unparseable
-        // token shortened it and shifted every later band onto a gain that belonged to a
-        // different frequency — "3,x,5" gave band 1 the 5 dB meant for band 2. Substituting per
-        // slot keeps a corrupt token confined to its own band.
         val stored = prefs.getString(KEY_GAINS, null)
             ?.split(",")
             ?.map { it.toIntOrNull() ?: 0 }

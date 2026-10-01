@@ -31,12 +31,6 @@ fun Fragment.trackNowPlaying(adapter: LibraryListAdapter) {
     }
 }
 
-/**
- * The epoch guard matters: the collector restarts on every foreground return and the StateFlow
- * replays its value, so without it the whole list was re-sorted and rebound on every app switch.
- * It is scoped to the VIEW, so a screen coming back through the back stack repopulates its fresh
- * adapter instead of staying empty.
- */
 fun Fragment.reloadOnLibraryChange(onChange: () -> Unit) {
     var loadedEpoch = -1
     viewLifecycleOwner.lifecycleScope.launch {

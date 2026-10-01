@@ -8,8 +8,6 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- Held by ExoPlayer via setWakeMode(WAKE_MODE_LOCAL) in PlaybackService, so long
-         playback with the screen off isn't exposed to doze-related stalls. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

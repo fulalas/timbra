@@ -19,32 +19,18 @@ android {
         applicationId = "com.timbra"
         minSdk = 24
         targetSdk = 35
-        // Bump both on EVERY change (see CLAUDE.md). versionName is surfaced in the
-        // app (Library → overflow → About) and in the output APK filename.
-        versionCode = 138
-        versionName = "0.9.16"
+        versionCode = 139
+        versionName = "0.9.17"
 
         resValue("string", "app_name", appName)
 
-        // The app ships no translations of its own, so its UI is English in every
-        // locale. AppCompat/Material/media3 dragged in 84 locales anyway, all landing
-        // in the uncompressed resources.arsc — ~450 KB to translate the back and
-        // overflow accessibility labels of an otherwise English app. AGP 8.7 has no
-        // androidResources.localeFilters yet (8.9+), so this is the deprecated spelling.
-        // Add a locale here only alongside a real values-<locale>/strings.xml.
         resourceConfigurations += "en"
 
-        // Explicit, so an unsupported ABI fails at INSTALL time. The jniLibs excludes below strip
-        // the x86 .so files but do not stop the APK installing on an x86/x86_64 device, where
-        // System.loadLibrary then fails and media3's loader swallows it — silently losing every
-        // FFmpeg-backed format instead of failing loudly.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
         create("release") {
-            // Release key committed to the repo (credentials are intentionally public) so the
-            // APK has a stable signing identity and installs/updates over adb without setup.
             storeFile = file("timbra.keystore")
             storePassword = "timbra"
             keyAlias = "timbra"
@@ -85,8 +71,6 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // The FFmpeg libs ship prebuilt in the nextlib AAR for all ABIs; ndk.abiFilters
-            // doesn't strip dependency jniLibs, so drop the emulator-only x86 ABIs here.
             excludes += listOf("**/x86/**", "**/x86_64/**")
         }
     }

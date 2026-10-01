@@ -35,7 +35,6 @@ class PlayModesTest {
     }
 
     @Test fun `enumByName round-trips every entry`() {
-        // This is what persistence relies on: names are stable under reordering, ordinals are not.
         for (m in ShuffleMode.entries) assertEquals(m, enumByName(m.name, ShuffleMode.OFF))
         for (m in RepeatMode.entries) assertEquals(m, enumByName(m.name, RepeatMode.OFF))
     }
@@ -59,8 +58,6 @@ class PlayModesTest {
     }
 
     @Test fun `absent subtitles are null, not a zero resource id`() {
-        // 0 is not a valid resource id: modelling absence in the type is what stops a caller
-        // handing it to getString and getting a NotFoundException.
         assertNull(ShuffleMode.OFF.subtitleRes)
         assertNull(ShuffleMode.ALL.subtitleRes)
         assertNotNull(ShuffleMode.CURRENT.subtitleRes)

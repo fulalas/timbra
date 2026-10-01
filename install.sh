@@ -9,9 +9,6 @@ CLEAN=0
 if [ -n "$TIMBRA_ENV" ] && [ -f "$TIMBRA_ENV" ]; then
     source "$TIMBRA_ENV"
 elif [ -f "${TOOLCHAIN_DIR:-$DIR/toolchain}/env.sh" ]; then
-    # TOOLCHAIN_DIR honoured exactly as in build.sh — which invokes this script, so hardcoding
-    # $DIR/toolchain meant `TOOLCHAIN_DIR=... ./build.sh` provisioned adb somewhere this step
-    # could not find it, and the install failed after a build that worked.
     source "${TOOLCHAIN_DIR:-$DIR/toolchain}/env.sh"
 elif [ -f "$DIR/../toolchain/env.sh" ]; then
     source "$DIR/../toolchain/env.sh"
@@ -21,8 +18,6 @@ NAME=$(sed -n 's/^appName=//p' "$DIR/gradle.properties" | tr -d '\r')
 NAME_LC=$(echo "${NAME:-app}" | tr '[:upper:]' '[:lower:]')
 PKG=$(sed -n 's/.*applicationId *= *"\(.*\)".*/\1/p' "$DIR/app/build.gradle.kts")
 [ -n "$PKG" ] && [ -n "$NAME" ] || { echo "Could not read appName/applicationId from the build files."; exit 1; }
-# Single quotes doubled for the SQL literals below: appName is the documented rename knob, and an
-# apostrophe in it produced a syntax error that only surfaced as the generic WARN further down.
 NAME_SQL=$(printf "%s" "$NAME" | sed "s/'/''/g")
 PKG_SQL=$(printf "%s" "$PKG" | sed "s/'/''/g")
 APK=$(ls -t "$DIR/${NAME_LC}-"*.apk 2>/dev/null | head -1)

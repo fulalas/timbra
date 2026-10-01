@@ -33,9 +33,6 @@ object Format {
             )
         }
         if (bitrateBps > 0) parts.add("${bitrateBps / 1000}Kbps")
-        // Extension of the FILE NAME, not of the whole path: applied to the path, an
-        // extension-less file under a dotted directory (".../Vol.2/track01") yielded a
-        // "container" containing path separators ("2/track01").
         filePath.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.US)
             .takeIf { it.isNotBlank() }?.let { parts.add(it) }
         return parts.joinToString("  ")

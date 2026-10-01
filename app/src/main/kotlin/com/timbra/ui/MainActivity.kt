@@ -96,9 +96,6 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Apps targeting SDK 35 are drawn edge-to-edge and android:statusBarColor /
-        // navigationBarColor are IGNORED, so without this the toolbar sits under the status bar and
-        // the mini-player under the navigation bar — the controls the user actually taps.
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
@@ -114,9 +111,6 @@ class MainActivity : AppCompatActivity() {
             supportActionBar?.subtitle =
                 if (dest.id == R.id.folderTreeFragment) breadcrumbFor(args?.getString("folderPath").orEmpty())
                 else null
-            // Leaving the player: stop any title marquee and return the SHARED toolbar
-            // title view to its stock state — end-ellipsis and NOT horizontally scrolling,
-            // else long titles on other screens clip with no "…" (the scrolling flag leaks).
             if (dest.id != R.id.playerFragment) {
                 toolbarMarquee?.stop()
                 binding.toolbar.post {
@@ -132,9 +126,6 @@ class MainActivity : AppCompatActivity() {
         setupMiniPlayer()
         ensureAudioPermission(firstCreate = savedInstanceState == null)
 
-        // Launched ONCE here (not in onStart): repeatOnLifecycle already stops/restarts the
-        // collection across background/foreground, whereas launching from onStart would add
-        // one more never-completing collector per foreground cycle — unbounded growth.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 player.state.collect { bindMiniPlayer(it) }
@@ -144,10 +135,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Gated on the permission, and not only as an optimisation: below API 29 MediaProvider
-        // declares android:readPermission, so querying it before the grant throws SecurityException
-        // — and onCreate merely QUEUES the request, so on a first run onStart gets here first. The
-        // throw would leave this bare launch and take the process down on launch.
         if (hasAudioPermission()) lifecycleScope.launch { app.refreshLibraryIfChanged() }
         player.connect {
             if (!player.isQueueEmpty()) openPlayerOnce() else maybeRestorePlayback()
@@ -169,10 +156,6 @@ class MainActivity : AppCompatActivity() {
                 enqueuedFlags.add(i in enqSet)
             }
             if (tracks.isEmpty()) return@launch
-            // Some saved tracks may be gone (deleted/rescanned). Land on the surviving position
-            // of the track that was current, or — when that one is itself gone — on its NEAREST
-            // surviving neighbour. Falling back to index 0 restarted the queue at the top while
-            // still applying the dead track's elapsed time to an unrelated song.
             var index = 0
             var bestDistance = Int.MAX_VALUE
             kept.forEachIndexed { newIndex, savedIndex ->
@@ -180,8 +163,6 @@ class MainActivity : AppCompatActivity() {
                 if (d < bestDistance) { bestDistance = d; index = newIndex }
             }
             val positionMs = if (kept.getOrNull(index) == saved.index) saved.positionMs else 0L
-            // The shuffle session is recorded as positions in the SAVED queue, so it has to travel
-            // through the same surviving-index map as everything else here.
             val newIndexOf = HashMap<Int, Int>(kept.size)
             kept.forEachIndexed { newIndex, savedIndex -> newIndexOf[savedIndex] = newIndex }
             player.restore(
@@ -195,9 +176,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPlayerOnce() {
         if (app.openedPlayerThisLaunch) return
-        // Reached from a coroutine that resumed after a suspending library read, so the Activity
-        // may already be stopped: committing then throws instead of deferring. Don't burn the
-        // once-per-launch flag either — the next onStart's connect callback retries.
         if (supportFragmentManager.isStateSaved) return
         if (navController.currentDestination?.id != R.id.libraryFragment) return
         app.openedPlayerThisLaunch = true
@@ -227,8 +205,6 @@ class MainActivity : AppCompatActivity() {
     })
 
     private fun rescanLibrary() {
-        // Nothing to read without the permission, and querying anyway would throw below API 29
-        // (see onStart) — ask for it instead; the grant callback refreshes.
         if (!hasAudioPermission()) { ensureAudioPermission(firstCreate = false); return }
         app.refreshLibrary()
         lifecycleScope.launch {
@@ -237,11 +213,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Announce something in the app's own overlay, NOT a Toast: the system queues toasts and
-     * plays each one for its full duration, so messages fired in quick succession lag behind
-     * the action that caused them (and Android 12+ rate-limits them away entirely).
-     */
     fun showPopup(msg: String, durationMs: Long = Popup.SHORT_MS) =
         Popup.show(binding.appPopup, msg, durationMs)
 
@@ -251,15 +222,11 @@ class MainActivity : AppCompatActivity() {
         if (targetDir.isBlank()) return
         lifecycleScope.launch {
             val root = repository.folderRoot()
-            // The trailing '/' matters: without it a directory whose name merely BEGINS with the
-            // root's name matched, and the relative path then started mid-segment — stacking
-            // folder entries that don't exist, each silently resolving to the tree root.
             val prefix = "${root.path}/"
             val rel = if (targetDir == root.path) ""
             else if (targetDir.startsWith(prefix)) targetDir.removePrefix(prefix)
             else return@launch
             val segments = rel.split('/').filter { it.isNotEmpty() }
-            // The tree read suspended; a stopped Activity can no longer take a transaction.
             if (supportFragmentManager.isStateSaved) return@launch
             navController.navigate(
                 R.id.folderTreeFragment,
@@ -293,8 +260,6 @@ class MainActivity : AppCompatActivity() {
     fun setMarqueeTitle(title: String) {
         supportActionBar?.title = title
         binding.toolbar.post {
-            // The post may land after the user has left the player, whose title this is — the
-            // toolbar's title view is SHARED, so writing it then would clobber the new screen's.
             if (!onPlayerScreen) return@post
             val tv = toolbarTitleView() ?: return@post
             val marquee = toolbarMarquee?.takeIf { it.view === tv }
@@ -355,9 +320,6 @@ class MainActivity : AppCompatActivity() {
             val pi = MediaStore.createDeleteRequest(contentResolver, uris)
             deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
         } else {
-            // Off the main thread, and the outcome reported: these are synchronous ContentResolver
-            // calls, one per file, and discarding the result meant a delete that failed was silent
-            // while refreshLibrary() ran and the file reappeared in the list unexplained.
             lifecycleScope.launch {
                 val failed = withContext(Dispatchers.IO) {
                     uris.count { runCatching { contentResolver.delete(it, null, null) }.getOrDefault(0) == 0 }
@@ -414,12 +376,8 @@ class MainActivity : AppCompatActivity() {
             miniSubtitle.text = s.artist
         }
         miniTransport.bind(s, prev?.takeIf { it.hasItem })
-        // Only (re)load the cover when the track actually changes, otherwise it flickers on
-        // every 500ms position tick.
         if (s.mediaId != miniArtMediaId) {
             miniArtMediaId = s.mediaId
-            // Load via the track's content Uri so embedded-only covers are found too (and keyed
-            // per TRACK — same album, different files, different embedded art is possible).
             val uri = if (s.mediaId >= 0) MediaRepository.trackUri(s.mediaId) else null
             ArtLoader.load(miniArt, this@MainActivity, uri, s.albumId) { miniArt.isVisible = it }
         }
@@ -444,22 +402,12 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isEmpty()) {
-            // Only on a genuine first create. This activity declares no android:configChanges, so
-            // onCreate runs again on every rotation, dark-mode switch and multi-window resize — and
-            // refreshLibrary() discards the track list, folder tree, traversal cache AND the whole
-            // art LruCache, so a rotation was re-querying MediaStore and re-decoding every cover.
             if (firstCreate) app.refreshLibrary()
         } else {
             permLauncher.launch(needed.toTypedArray())
         }
     }
 
-    /**
-     * A refused audio permission used to be a dead end: the launcher callback did nothing,
-     * [ensureAudioPermission] is only reachable from onCreate, and the browse screens' empty state
-     * reads "no results" — so the library just looked empty, with no explanation and no way to
-     * re-ask short of force-stopping the app.
-     */
     private fun showPermissionRationale() {
         Dialogs.confirm(
             this,
